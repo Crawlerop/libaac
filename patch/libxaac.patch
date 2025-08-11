@@ -1,0 +1,979 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 82539b7..4996c67 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -27,3 +27,5 @@ include("${XAAC_ROOT}/encoder/libxaacenc.cmake")
+ include("${XAAC_ROOT}/test/encoder/xaacenc.cmake")
+ include("${XAAC_ROOT}/fuzzer/xaac_enc_fuzzer.cmake")
+ 
++set_property(TARGET libxaacenc PROPERTY POSITION_INDEPENDENT_CODE 1)
++set_property(TARGET libxaacdec PROPERTY POSITION_INDEPENDENT_CODE 1)
+diff --git a/cmake/utils.cmake b/cmake/utils.cmake
+index 5d9cd37..3196501 100644
+--- a/cmake/utils.cmake
++++ b/cmake/utils.cmake
+@@ -51,6 +51,7 @@ function(libxaac_add_definitions)
+     add_definitions(-DX86_64 -D_X86_64_)
+   endif()
+   add_definitions(-DLOUDNESS_LEVELING_SUPPORT)
++  add_definitions(-DAAC_NEW_TABLES)
+ endfunction()
+ 
+ # Adds libraries needed for executables
+diff --git a/decoder/ixheaacd_api.c b/decoder/ixheaacd_api.c
+index 5e6a0ac..c4ae8e0 100644
+--- a/decoder/ixheaacd_api.c
++++ b/decoder/ixheaacd_api.c
+@@ -579,7 +579,7 @@ IA_ERRORCODE ixheaacd_dec_api(pVOID p_ia_xheaac_dec_obj, WORD32 i_cmd,
+           break;
+         }
+         case IA_XHEAAC_DEC_CONFIG_PARAM_PCM_WDSZ: {
+-          if ((*pui_value != 16) && (*pui_value != 24)) {
++          if ((*pui_value != 16) && (*pui_value != 24) && (*pui_value != 32)) {
+             p_obj_exhaacplus_dec->aac_config.ui_pcm_wdsz = 16;
+             return (IA_XHEAAC_DEC_CONFIG_NONFATAL_INVALID_PCM_WDSZ);
+           }
+diff --git a/decoder/ixheaacd_decode_main.c b/decoder/ixheaacd_decode_main.c
+index 982a6aa..d827687 100644
+--- a/decoder/ixheaacd_decode_main.c
++++ b/decoder/ixheaacd_decode_main.c
+@@ -88,6 +88,7 @@ VOID ixheaacd_samples_sat(WORD8 *outbuffer, WORD32 num_samples_out,
+   FLOAT32 write_local_float;
+ 
+   WORD16 *out_buf = (WORD16 *)outbuffer;
++  FLOAT32 *out_buf_float = (FLOAT32 *)outbuffer;
+ 
+   num = num_channel_out * num_samples_out;
+ 
+@@ -105,6 +106,20 @@ VOID ixheaacd_samples_sat(WORD8 *outbuffer, WORD32 num_samples_out,
+     }
+ 
+     *out_bytes = num * sizeof(WORD16);
++  } else if (pcmsize == 32) {
++    for (i = 0; i < num; i++) {
++      write_local_float =
++          (out_samples[i % num_channel_out][i / num_channel_out]);
++
++      if (write_local_float > 32767.0f) {
++        write_local_float = 32767.0f;
++      } else if (write_local_float < -32768.0f) {
++        write_local_float = -32768.0f;
++      }
++      out_buf_float[i] = write_local_float / 32767;
++    }
++
++    *out_bytes = num * sizeof(FLOAT32);
+   } else {
+     WORD8 *out_24bit = (WORD8 *)out_buf;
+     for (i = 0; i < num; i++) {
+diff --git a/encoder/ixheaace_api.c b/encoder/ixheaace_api.c
+index 6d5c47e..22fe7e4 100644
+--- a/encoder/ixheaace_api.c
++++ b/encoder/ixheaace_api.c
+@@ -831,7 +831,7 @@ static IA_ERRORCODE ixheaace_set_config_params(ixheaace_api_struct *pstr_api_str
+     return err_code;
+   }
+ 
+-  if (pstr_input_config->ui_pcm_wd_sz != 16) {
++  if (pstr_input_config->ui_pcm_wd_sz != 16 && pstr_input_config->ui_pcm_wd_sz != 32) {
+     return (IA_EXHEAACE_CONFIG_FATAL_PCM_WDSZ);
+   }
+   if ((pstr_input_config->aac_config.inv_quant != 0) &&
+@@ -901,6 +901,7 @@ static IA_ERRORCODE ixheaace_set_config_params(ixheaace_api_struct *pstr_api_str
+         (AOT_AAC_ELD == pstr_input_config->aot)) {
+       pstr_api_struct->config[ele_idx].aac_classic = 0;
+     }
++#ifndef AAC_NEW_TABLES
+     if (pstr_api_struct->config[ele_idx].sample_rate < 32000) {
+       if (pstr_api_struct->config[ele_idx].aac_classic == 0) {
+         pstr_api_struct->config[ele_idx].aac_classic = 1;
+@@ -912,6 +913,7 @@ static IA_ERRORCODE ixheaace_set_config_params(ixheaace_api_struct *pstr_api_str
+         pstr_input_config->aot = AOT_AAC_LD;
+       }
+     }
++#endif
+     pstr_api_struct->config[ele_idx].eldsbr_found =
+         !(pstr_api_struct->config[ele_idx].aac_classic);
+   }
+@@ -1213,6 +1215,8 @@ static IA_ERRORCODE ixheaace_set_config_params(ixheaace_api_struct *pstr_api_str
+     }
+     pstr_api_struct->config[0].aac_config.full_bandwidth =
+         pstr_input_config->aac_config.full_bandwidth;
++    pstr_api_struct->config[0].aac_config.band_width = 
++        pstr_input_config->aac_config.bandwidth;
+   }
+ 
+   return IA_NO_ERROR;
+@@ -2692,6 +2696,7 @@ static IA_ERRORCODE ia_enhaacplus_enc_execute(ixheaace_api_struct *pstr_api_stru
+   iexheaac_encoder_str **pstr_aac_enc;
+   iaace_config *pstr_aac_config;
+   pWORD16 pw_inp_buf = NULL;
++  pFLOAT32 pw_inp_buf_float = NULL;
+   pUWORD8 pub_out_buf = NULL;
+   FLOAT32 *ptr_input_buffer = NULL;
+   FLOAT32 *ptr_input_buffer_mps = NULL;
+@@ -2729,6 +2734,8 @@ static IA_ERRORCODE ia_enhaacplus_enc_execute(ixheaace_api_struct *pstr_api_stru
+   pstr_aac_enc = pstr_api_struct->pstr_state->aac_enc_pers_mem;
+ 
+   pw_inp_buf = (pWORD16)pstr_api_struct->pp_mem[IA_ENHAACPLUSENC_INPUT_IDX];
++  pw_inp_buf_float = (pFLOAT32)pstr_api_struct->pp_mem[IA_ENHAACPLUSENC_INPUT_IDX];
++
+   if (ele_idx == 0) {
+     pstr_api_struct->pstr_state->i_out_bytes = 0;
+     pub_out_buf = ((pUWORD8)pstr_api_struct->pp_mem[IA_ENHAACPLUSENC_OUTPUT_IDX]);
+@@ -2851,25 +2858,25 @@ static IA_ERRORCODE ia_enhaacplus_enc_execute(ixheaace_api_struct *pstr_api_stru
+             (!((pstr_api_struct->pstr_mps_212_enc != NULL) &&
+                pstr_api_struct->pstr_state->mps_enable))) {
+           for (idx = 0; idx < (num_samples_read); idx++) {
+-            ptr_input_buffer[write_off_set + idx] = (FLOAT32)pw_inp_buf[idx];
++            ptr_input_buffer[write_off_set + idx] = pstr_api_struct->config->ui_pcm_wd_sz == 16 ? (FLOAT32)pw_inp_buf[idx] : (pw_inp_buf_float[idx] * 32767);
+           }
+         } else if (pstr_api_struct->config[ele_idx].i_channels == 1) {
+           for (idx = 0; idx < num_samples_read; idx++) {
+             ptr_input_buffer[write_off_set + (IXHEAACE_MAX_CH_IN_BS_ELE * idx)] =
+-                (FLOAT32)pw_inp_buf[idx];
++                pstr_api_struct->config->ui_pcm_wd_sz == 16 ? (FLOAT32)pw_inp_buf[idx] : (pw_inp_buf_float[idx] * 32767);
+           }
+         } else if ((pstr_api_struct->pstr_mps_212_enc != NULL) &&
+                    pstr_api_struct->pstr_state->mps_enable) {
+           ptr_input_buffer_mps = pstr_api_struct->pstr_state->time_signal_mps;
+           for (idx = 0; idx < (num_samples_read / 2); idx++) {
+-            ptr_input_buffer_mps[idx] = (FLOAT32)pw_inp_buf[2 * idx];
++            ptr_input_buffer_mps[idx] = pstr_api_struct->config->ui_pcm_wd_sz == 16 ? (FLOAT32)pw_inp_buf[2 * idx] : (pw_inp_buf_float[2 * idx] * 32767);
+             ptr_input_buffer_mps[(num_samples_read / 2) + idx] =
+-                (FLOAT32)pw_inp_buf[(2 * idx) + 1];
++                pstr_api_struct->config->ui_pcm_wd_sz == 16 ? (FLOAT32)pw_inp_buf[(2 * idx) + 1] : (pw_inp_buf_float[(2 * idx) + 1] * 32767);
+           }
+         }
+       } else {
+         for (idx = 0; idx < (num_samples_read + write_off_set); idx++) {
+-          ptr_input_buffer[idx] = (FLOAT32)pw_inp_buf[idx];
++          ptr_input_buffer[idx] = pstr_api_struct->config->ui_pcm_wd_sz == 16 ? (FLOAT32)pw_inp_buf[idx] : (pw_inp_buf_float[idx] * 32767);
+         }
+       }
+     } else {
+@@ -2877,9 +2884,9 @@ static IA_ERRORCODE ia_enhaacplus_enc_execute(ixheaace_api_struct *pstr_api_stru
+         slot = pstr_api_struct->config[ele_idx].element_slot;
+         for (idx = 0; idx < num_samples_read / 2; idx++) {
+           ptr_input_buffer[2 * idx + write_off_set] =
+-              (FLOAT32)pw_inp_buf[total_channels * idx + slot];
++              pstr_api_struct->config->ui_pcm_wd_sz == 16 ? (FLOAT32)pw_inp_buf[total_channels * idx + slot] : (pw_inp_buf_float[total_channels * idx + slot] * 32767);
+           ptr_input_buffer[2 * idx + write_off_set + 1] =
+-              (FLOAT32)pw_inp_buf[total_channels * idx + slot + 1];
++              pstr_api_struct->config->ui_pcm_wd_sz == 16 ? (FLOAT32)pw_inp_buf[total_channels * idx + slot + 1] : (pw_inp_buf_float[total_channels * idx + slot + 1] * 32767);
+         }
+       }
+ 
+@@ -2887,14 +2894,14 @@ static IA_ERRORCODE ia_enhaacplus_enc_execute(ixheaace_api_struct *pstr_api_stru
+         slot = pstr_api_struct->config[ele_idx].element_slot;
+         for (idx = 0; idx < num_samples_read; idx++) {
+           ptr_input_buffer[write_off_set + (IXHEAACE_MAX_CH_IN_BS_ELE * idx)] =
+-              (FLOAT32)pw_inp_buf[total_channels * idx + slot];
++              pstr_api_struct->config->ui_pcm_wd_sz == 16 ? (FLOAT32)pw_inp_buf[total_channels * idx + slot] : (pw_inp_buf_float[total_channels * idx + slot] * 32767);
+         }
+       }
+ 
+       if (pstr_api_struct->config[ele_idx].i_channels == 6) {
+         ptr_input_buffer_mps = pstr_api_struct->pstr_state->time_signal_mps;
+         for (idx = 0; idx < num_samples_read; idx++) {
+-          ptr_input_buffer_mps[idx] = (FLOAT32)pw_inp_buf[idx];
++          ptr_input_buffer_mps[idx] = pstr_api_struct->config->ui_pcm_wd_sz == 16 ? (FLOAT32)pw_inp_buf[idx] : (pw_inp_buf_float[idx] * 32767);
+         }
+       }
+     }
+diff --git a/encoder/ixheaace_asc_write.c b/encoder/ixheaace_asc_write.c
+index 3bf2736..356dc11 100644
+--- a/encoder/ixheaace_asc_write.c
++++ b/encoder/ixheaace_asc_write.c
+@@ -412,6 +412,7 @@ WORD32 ixheaace_get_audiospecific_config_bytes(
+     pstr_audio_specific_config->sampling_frequency /= 2;
+ 
+     if ((AOT_SBR == aot) || (AOT_PS == aot)) {
++      ext_aot = aot;
+       aot = AOT_AAC_LC;
+     }
+   }
+@@ -460,9 +461,12 @@ WORD32 ixheaace_get_audiospecific_config_bytes(
+   bit_cnt += iusace_write_bits_buf(pstr_it_bit_buff,
+                                    (pstr_audio_specific_config->channel_configuration), 4);
+ 
++  if (ext_aot != -1) aot = ext_aot;
++
+   if ((AOT_SBR == aot) || (AOT_PS == aot)) {
+     ext_aot = AOT_SBR;
+     sbr_present_flag = 1;
++
+     tmp = 0x0f;
+     for (i = 0; i < sizeof(ia_sampl_freq_table) / sizeof(ia_sampl_freq_table[0]); i++) {
+       if (ia_sampl_freq_table[i] == pstr_audio_specific_config->ext_sampling_frequency) {
+@@ -470,18 +474,12 @@ WORD32 ixheaace_get_audiospecific_config_bytes(
+         break;
+       }
+     }
++
+     pstr_audio_specific_config->ext_samp_freq_index = (UWORD32)tmp;
+-    bit_cnt += iusace_write_bits_buf(pstr_it_bit_buff,
+-                                     (pstr_audio_specific_config->ext_samp_freq_index), 4);
+-    if (pstr_audio_specific_config->ext_samp_freq_index == 0xf) {
+-      bit_cnt += iusace_write_bits_buf(pstr_it_bit_buff,
+-                                       (pstr_audio_specific_config->ext_sampling_frequency), 24);
+-    }
++
+     if (AOT_PS == aot) {
+       ps_present_flag = 1;
+     }
+-
+-    bit_cnt += iusace_write_bits_buf(pstr_it_bit_buff, AOT_AAC_LC, 5);
+   }
+   switch (aot) {
+     case AOT_AAC_ELD: {
+@@ -506,7 +504,7 @@ WORD32 ixheaace_get_audiospecific_config_bytes(
+         ext_id = 0x2b7;
+         bit_cnt += iusace_write_bits_buf(pstr_it_bit_buff, ext_id, 11);
+ 
+-        bit_cnt += iusace_write_bits_buf(pstr_it_bit_buff, aot, 5);
++        bit_cnt += iusace_write_bits_buf(pstr_it_bit_buff, ext_aot, 5);
+         bit_cnt += iusace_write_bits_buf(pstr_it_bit_buff, sbr_present_flag, 1);
+         if (sbr_present_flag) {
+           bit_cnt += iusace_write_bits_buf(pstr_it_bit_buff,
+diff --git a/encoder/ixheaace_enc_init.c b/encoder/ixheaace_enc_init.c
+index dc6ba74..da43291 100644
+--- a/encoder/ixheaace_enc_init.c
++++ b/encoder/ixheaace_enc_init.c
+@@ -374,7 +374,7 @@ IA_ERRORCODE ia_enhaacplus_enc_aac_enc_open(iexheaac_encoder_str **ppstr_exheaac
+ 
+   WORD32 tns_mask = config.use_tns;
+   if (config.full_bandwidth) {
+-    pstr_exheaac_encoder->config.band_width = config.core_sample_rate >> 2;
++    pstr_exheaac_encoder->config.band_width = config.core_sample_rate >> (aot == AOT_USAC ? 2 : 1);
+   } else {
+     ixheaace_determine_bandwidth(pstr_exheaac_encoder->config.band_width, config.bit_rate,
+                                  config.core_sample_rate, pstr_element_info->n_channels_in_el,
+diff --git a/encoder/ixheaace_rom.c b/encoder/ixheaace_rom.c
+index 532fee9..732e64a 100644
+--- a/encoder/ixheaace_rom.c
++++ b/encoder/ixheaace_rom.c
+@@ -1620,6 +1620,7 @@ const ixheaace_temporal_noise_shaping_tables ixheaace_enhaacplus_enc_tns_tab = {
+      {8000, 39, 14, 39, 14, 31, 30}},
+ 
+     /*tns_info_tab[5]*/
++#ifndef AAC_NEW_TABLES
+     {{4000,
+       12000,
+       {1.2f, 1800, 16000, 0.6f},
+@@ -1654,7 +1655,49 @@ const ixheaace_temporal_noise_shaping_tables ixheaace_enhaacplus_enc_tns_tab = {
+       {1.41f, 3750, 16000, 0.3f},
+       {1.41f, 2500, 16000, 0.5f},
+       {1.41f, 3750, 16000, 0.3f}}},
++#else
++    {{4000,
++      12000,
++      {1.2f, 1800, 16000, 0.6f},
++      {1.2f, 2500, 16000, 0.6f},
++      {1.2f, 1800, 16000, 0.6f},
++      {1.2f, 2500, 16000, 0.6f}},
++
++     {12001,
++      20000,
++      {1.41f, 2500, 16000, 0.6f},
++      {1.41f, 3750, 16000, 0.6f},
++      {1.41f, 2500, 16000, 0.6f},
++      {1.41f, 3750, 16000, 0.6f}},
+ 
++     {20001,
++      28000,
++      {1.41f, 2500, 16000, 0.5f},
++      {1.41f, 3750, 16000, 0.5f},
++      {1.41f, 2500, 16000, 0.5f},
++      {1.41f, 3750, 16000, 0.5f}},
++
++     {28001,
++      36000,
++      {1.41f, 2500, 16000, 0.8f},
++      {1.41f, 3750, 16000, 0.3f},
++      {1.41f, 2500, 16000, 0.5f},
++      {1.41f, 3750, 16000, 0.3f}},
++
++     {36001,
++      52000,
++      {1.41f, 2500, 16000, 0.5f},
++      {1.41f, 3750, 16000, 0.1f},
++      {1.41f, 2500, 16000, 0.5f},
++      {1.41f, 3750, 16000, 0.1f}},
++
++     {52001,
++      576000,
++      {1.41f, 2500, 16000, 0.3f},
++      {1.41f, 3750, 16000, 0.1f},
++      {1.41f, 2500, 16000, 0.3f},
++      {1.41f, 3750, 16000, 0.1f}}},
++#endif
+     /*tns_coeff_3[8]*/
+ 
+     {-0.98480773f, -0.866025389f, -0.642787576f, -0.342020154f, 0.0f, 0.433883727f, 0.781831503f,
+diff --git a/encoder/ixheaace_rom.h b/encoder/ixheaace_rom.h
+index eb9e882..e85b300 100644
+--- a/encoder/ixheaace_rom.h
++++ b/encoder/ixheaace_rom.h
+@@ -100,7 +100,7 @@ typedef struct {
+ extern const ixheaace_quant_tables ixheaace_enc_quant_tab;
+ typedef struct {
+   const ixheaace_temporal_noise_shaping_max_table tns_max_bands_table[12];
+-  const ixheaace_temporal_noise_shaping_info_tab tns_info_tab[5];
++  const ixheaace_temporal_noise_shaping_info_tab tns_info_tab[6];
+   const FLOAT32 tns_coeff_3[8];
+   const FLOAT32 tns_coeff_3_borders[8];
+   const FLOAT32 tns_coeff_4[16];
+diff --git a/encoder/ixheaace_sbr_freq_scaling.c b/encoder/ixheaace_sbr_freq_scaling.c
+index 7eec5a9..192907e 100644
+--- a/encoder/ixheaace_sbr_freq_scaling.c
++++ b/encoder/ixheaace_sbr_freq_scaling.c
+@@ -158,31 +158,31 @@ static WORD32 ixheaace_get_start_freq(WORD32 fs, WORD32 start_freq) {
+   WORD32 minimum_k0;
+ 
+   switch (fs) {
+-    case 16000:
++    case 8000:
+       minimum_k0 = 24;
+       break;
+-    case 22050:
++    case 11025:
+       minimum_k0 = 17;
+       break;
+-    case 24000:
++    case 12000:
+       minimum_k0 = 16;
+       break;
+-    case 32000:
++    case 16000:
+       minimum_k0 = 16;
+       break;
+-    case 44100:
++    case 22050:
+       minimum_k0 = 12;
+       break;
+-    case 48000:
++    case 24000:
+       minimum_k0 = 11;
+       break;
+-    case 64000:
++    case 32000:
+       minimum_k0 = 10;
+       break;
+-    case 88200:
++    case 44100:
+       minimum_k0 = 7;
+       break;
+-    case 96000:
++    case 48000:
+       minimum_k0 = 7;
+       break;
+     default:
+@@ -190,30 +190,30 @@ static WORD32 ixheaace_get_start_freq(WORD32 fs, WORD32 start_freq) {
+   }
+ 
+   switch (fs) {
+-    case 16000: {
++    case 8000: {
+       return (minimum_k0 + vector_offset_16k[start_freq]);
+     } break;
+ 
+-    case 22050: {
++    case 11025: {
+       return (minimum_k0 + vector_offset_22k[start_freq]);
+     } break;
+ 
+-    case 24000: {
++    case 12000: {
+       return (minimum_k0 + vector_offset_24k[start_freq]);
+     } break;
+ 
+-    case 32000: {
++    case 16000: {
+       return (minimum_k0 + vector_offset_32k[start_freq]);
+     } break;
+ 
+-    case 44100:
+-    case 48000:
+-    case 64000: {
++    case 22050:
++    case 24000:
++    case 32000: {
+       return (minimum_k0 + vector_offset_44_48_64[start_freq]);
+     } break;
+ 
+-    case 88200:
+-    case 96000: {
++    case 44100:
++    case 48000: {
+       return (minimum_k0 + vector_offset_88_96[start_freq]);
+     } break;
+ 
+@@ -230,36 +230,54 @@ static WORD32 ixheaace_get_stop_freq(WORD32 fs, WORD32 stop_freq) {
+   WORD32 v_dstop[13];
+ 
+   switch (fs) {
+-    case 16000:
++    case 8000:
+       k1_min = ixheaace_stop_freq_16k[0];
+       v_stop_freq = (WORD32 *)&ixheaace_stop_freq_16k[0];
+       break;
+-    case 22050:
++    case 11025:
+       k1_min = ixheaace_stop_freq_22k[0];
+       v_stop_freq = (WORD32 *)&ixheaace_stop_freq_22k[0];
+       break;
+-    case 24000:
++    case 12000:
+       k1_min = ixheaace_stop_freq_24k[0];
+       v_stop_freq = (WORD32 *)&ixheaace_stop_freq_24k[0];
+       break;
+-    case 32000:
++    case 16000:
+       k1_min = 32;
+ 
+       v_stop_freq = (WORD32 *)vector_stop_freq_32;
+       break;
+ 
+-    case 44100:
++    case 22050:
+       k1_min = 23;
+ 
+       v_stop_freq = (WORD32 *)vector_stop_freq_44;
+       break;
+ 
+-    case 48000:
++    case 24000:
+       k1_min = 21;
+ 
+       v_stop_freq = (WORD32 *)vector_stop_freq_48;
+       break;
+ 
++    case 32000:
++      k1_min = 20;
++
++      v_stop_freq = (WORD32 *)vector_stop_freq_64;
++      break;
++
++    case 44100:
++      k1_min = 15;
++
++      v_stop_freq = (WORD32 *)vector_stop_freq_88;
++      break;
++
++    case 48000:
++      k1_min = 13;
++
++      v_stop_freq = (WORD32 *)vector_stop_freq_96;
++      break;
++
+     default:
+       v_stop_freq = (WORD32 *)vector_stop_freq_32;
+       k1_min = 21; /* illegal fs  */
+diff --git a/encoder/ixheaace_sbr_main.c b/encoder/ixheaace_sbr_main.c
+index 893d215..9e13b13 100644
+--- a/encoder/ixheaace_sbr_main.c
++++ b/encoder/ixheaace_sbr_main.c
+@@ -100,7 +100,7 @@ FLOAT32 *ixheaace_get_hbe_resample_buffer(ixheaace_pstr_sbr_enc pstr_env_enc) {
+ static FLAG ia_enhaacplus_enc_get_sbr_tuning_table_idx(
+     UWORD32 bitrate, UWORD32 num_ch, UWORD32 sample_rate, ixheaace_str_qmf_tabs *pstr_qmf_tab,
+     UWORD32 *ptr_closest_br, WORD32 *ptr_idx_sr, WORD32 *ptr_idx_ch, WORD32 *ptr_idx_entry,
+-    ixheaace_sbr_tuning_tables sbr_tune_table[10][2][10]) {
++    ixheaace_sbr_tuning_tables sbr_tune_table[10][2][20]) {
+   WORD32 found = 0;
+   WORD32 i_sr, br_closest_lower_idx_sr = -1, br_closest_upper_idx_sr = -1;
+   WORD32 br_closest_lower_idx_ch = -1, br_closest_upper_idx_sch = -1;
+@@ -386,6 +386,7 @@ ixheaace_is_sbr_setting_available(UWORD32 bitrate, UWORD32 num_output_channels,
+   WORD32 idx_ch;
+   WORD32 idx_entry;
+ 
++#ifndef AAC_NEW_TABLES
+   switch (num_output_channels) {
+     case MONO:
+       if (sample_rate_input < 16000 || sample_rate_input > 48000) {
+@@ -396,6 +397,7 @@ ixheaace_is_sbr_setting_available(UWORD32 bitrate, UWORD32 num_output_channels,
+         return 0;
+       }
+   }
++#endif
+ 
+   *ptr_core_sr = sample_rate_input / 2;
+ 
+diff --git a/encoder/ixheaace_sbr_rom.c b/encoder/ixheaace_sbr_rom.c
+index 90e94c5..435fc2e 100644
+--- a/encoder/ixheaace_sbr_rom.c
++++ b/encoder/ixheaace_sbr_rom.c
+@@ -48,6 +48,9 @@ const WORD32 vector_offset_def[] = {0, 1, 2, 3, 4, 5, 6, 7, 9, 11, 13, 16, 20, 2
+ const WORD32 vector_stop_freq_32[14] = {32, 34, 36, 38, 40, 42, 44, 46, 49, 52, 55, 58, 61, 64};
+ const WORD32 vector_stop_freq_44[14] = {23, 25, 27, 29, 32, 34, 37, 40, 43, 47, 51, 55, 59, 64};
+ const WORD32 vector_stop_freq_48[14] = {21, 23, 25, 27, 30, 32, 35, 38, 42, 45, 49, 54, 59, 64};
++const WORD32 vector_stop_freq_64[14] = {20, 22, 24, 26, 28, 31, 34, 37, 41, 45, 49, 54, 59, 64};
++const WORD32 vector_stop_freq_88[14] = {15, 17, 19, 21, 23, 26, 29, 33, 37, 41, 46, 51, 57, 64};
++const WORD32 vector_stop_freq_96[14] = {13, 15, 17, 19, 21, 24, 27, 31, 35, 39, 44, 50, 57, 64};
+ 
+ const ixheaace_str_ps_tab ia_enhaacplus_enc_ps_tab = {
+     /*a_hyb_res[3]*/
+@@ -621,6 +624,7 @@ const ixheaace_str_qmf_tabs ixheaace_qmf_tab = {
+     {0.05857864376269f, 0.2f, 0.34142135623731f, 0.4f},
+ 
+     {8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000},
++#ifndef AAC_NEW_TABLES
+     {{{{8000, 10000, {7, 11}, 3, {1, 0, 6}, IXHEAACE_SBR_MODE_MONO},
+        {10000, 12000, {11, 13}, 3, {1, 0, 6}, IXHEAACE_SBR_MODE_MONO},
+        {12000, 48001, {14, 13}, 3, {1, 0, 6}, IXHEAACE_SBR_MODE_MONO},
+@@ -738,6 +742,238 @@ const ixheaace_str_qmf_tabs ixheaace_qmf_tab = {
+        {0}}}
+ 
+     },
++#else
++    {{{
++       /*** 8000hz 1ch ***/
++       {8000, 10000, {7, 11}, 3, {1, 0, 6}, IXHEAACE_SBR_MODE_MONO},
++       {10000, 12000, {11, 13}, 3, {1, 0, 6}, IXHEAACE_SBR_MODE_MONO},
++       {12000, 16000, {14, 13}, 3, {1, 0, 6}, IXHEAACE_SBR_MODE_MONO},
++       {16000, 24000, {14, 14}, 2, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {24000, 32000, {14, 14}, 2, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {32000, 48001, {14, 15}, 2, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {0}},
++      {
++       /*** 8000hz 2ch ***/
++       {16000, 24000, {6, 9}, 3, {1, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {24000, 28000, {9, 11}, 3, {1, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {28000, 36000, {11, 11}, 2, {2, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {36000, 44000, {13, 13}, 2, {2, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {44000, 52000, {14, 13}, 2, {2, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {52000, 60000, {15, 13}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {60000, 76000, {15, 13}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {76000, 128001, {15, 13}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {0}}},
++
++     {{
++       /*** 11025hz 1ch ***/
++       {8000, 10000, {5, 6}, 3, {1, 0, 6}, IXHEAACE_SBR_MODE_MONO},
++       {10000, 12000, {8, 12}, 3, {1, 0, 6}, IXHEAACE_SBR_MODE_MONO},
++       {12000, 16000, {12, 13}, 3, {1, 0, 6}, IXHEAACE_SBR_MODE_MONO},
++       {16000, 20000, {12, 13}, 3, {1, 0, 6}, IXHEAACE_SBR_MODE_MONO},
++       {20000, 24000, {13, 13}, 3, {1, 0, 6}, IXHEAACE_SBR_MODE_MONO},
++       {24000, 32000, {14, 14}, 2, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {32000, 48000, {15, 15}, 2, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {48000, 64001, {15, 15}, 1, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {0}},
++      {
++       /*** 11025hz 2ch ***/
++       {16000, 24000, {7, 9}, 3, {1, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {24000, 28000, {10, 10}, 3, {1, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {28000, 36000, {12, 12}, 2, {2, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {36000, 44000, {13, 13}, 2, {2, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {44000, 52000, {14, 13}, 2, {2, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {52000, 60000, {15, 13}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {60000, 76000, {15, 13}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {76000, 128001, {15, 13}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {0}}},
++
++     {{
++       /*** 12000hz 1ch ***/
++       {8000, 10000, {4, 6}, 3, {1, 0, 6}, IXHEAACE_SBR_MODE_MONO},
++       {10000, 12000, {7, 11}, 3, {1, 0, 6}, IXHEAACE_SBR_MODE_MONO},
++       {12000, 16000, {11, 12}, 3, {1, 0, 6}, IXHEAACE_SBR_MODE_MONO},
++       {16000, 20000, {11, 12}, 3, {1, 0, 6}, IXHEAACE_SBR_MODE_MONO},
++       {20000, 24000, {12, 12}, 3, {1, 0, 6}, IXHEAACE_SBR_MODE_MONO},
++       {24000, 32000, {13, 13}, 2, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {32000, 48000, {14, 14}, 2, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {48000, 64001, {15, 15}, 1, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {0}},
++      {
++       /*** 12000hz 2ch ***/
++       {16000, 24000, {6, 9}, 3, {1, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {24000, 28000, {9, 10}, 3, {1, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {28000, 36000, {11, 12}, 2, {2, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {36000, 44000, {12, 12}, 2, {2, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {44000, 52000, {13, 13}, 2, {2, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {52000, 60000, {14, 13}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {60000, 76000, {15, 13}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {76000, 128001, {15, 13}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {0}}},
++
++     {{
++       /*** 16000hz 1ch ***/
++       {6000, 8000, {0, 0}, 3, {1, 0, 6}, IXHEAACE_SBR_MODE_MONO},
++       {8000, 10000, {1, 0}, 3, {1, 0, 6}, IXHEAACE_SBR_MODE_MONO},
++       {10000, 12000, {2, 6}, 3, {1, 0, 6}, IXHEAACE_SBR_MODE_MONO},
++       {12000, 16000, {4, 6}, 3, {1, 0, 6}, IXHEAACE_SBR_MODE_MONO},
++       {16000, 18000, {4, 8}, 3, {1, 0, 6}, IXHEAACE_SBR_MODE_MONO},
++       {18000, 22000, {6, 11}, 2, {2, 0, 6}, IXHEAACE_SBR_MODE_MONO},
++       {22000, 28000, {10, 12}, 2, {2, 0, 6}, IXHEAACE_SBR_MODE_MONO},
++       {28000, 36000, {12, 13}, 2, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {36000, 44000, {14, 13}, 1, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {44000, 64001, {15, 13}, 1, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {0}},
++      {
++       /*** 16000hz 2ch ***/
++       {16000, 24000, {4, 1}, 3, {1, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {24000, 28000, {8, 10}, 3, {1, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {28000, 36000, {10, 12}, 2, {2, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {36000, 44000, {13, 13}, 2, {2, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {44000, 52000, {15, 13}, 2, {2, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {52000, 60000, {15, 13}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {60000, 76000, {15, 13}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {76000, 128001, {15, 13}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {0}}},
++
++     {{
++       /*** 22050hz 1ch ***/
++       {8000, 11369, {1, 1}, 3, {1, 0, 6}, IXHEAACE_SBR_MODE_MONO},
++       {11369, 16000, {3, 4}, 3, {1, 0, 6}, IXHEAACE_SBR_MODE_MONO},
++       {16000, 18000, {3, 5}, 3, {1, 0, 6}, IXHEAACE_SBR_MODE_MONO},
++       {18000, 22000, {4, 8}, 2, {2, 0, 6}, IXHEAACE_SBR_MODE_MONO},
++       {22000, 28000, {7, 8}, 2, {2, 0, 6}, IXHEAACE_SBR_MODE_MONO},
++       {28000, 36000, {10, 9}, 2, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {36000, 44000, {11, 10}, 1, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {44000, 52000, {13, 11}, 1, {2, 0, 0}, IXHEAACE_SBR_MODE_MONO},
++       {52000, 68000, {14, 12}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_MONO},
++       {68000, 96001, {14, 12}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_MONO},
++       {0}},
++      {
++       /*** 22050hz 2ch ***/
++       {16000, 24000, {2, 1}, 3, {1, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {24000, 28000, {5, 6}, 3, {1, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {28000, 32000, {5, 8}, 2, {2, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {32000, 36000, {7, 8}, 2, {2, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {36000, 44000, {10, 9}, 2, {2, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {44000, 52000, {12, 9}, 2, {3, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {52000, 60000, {13, 10}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {60000, 101000, {14, 12}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {101000, 128001, {15, 12}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {0}}},
++
++     {{
++       /*** 24000hz 1ch ***/
++       {8000, 12000, {1, 1}, 3, {1, 0, 6}, IXHEAACE_SBR_MODE_MONO},
++       {12000, 16000, {3, 4}, 3, {1, 0, 6}, IXHEAACE_SBR_MODE_MONO},
++       {16000, 18000, {3, 5}, 3, {1, 0, 6}, IXHEAACE_SBR_MODE_MONO},
++       {18000, 22000, {4, 8}, 2, {2, 0, 6}, IXHEAACE_SBR_MODE_MONO},
++       {22000, 28000, {7, 8}, 2, {2, 0, 6}, IXHEAACE_SBR_MODE_MONO},
++       {28000, 36000, {10, 9}, 2, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {36000, 44000, {11, 10}, 1, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {44000, 52000, {13, 11}, 1, {3, 0, 0}, IXHEAACE_SBR_MODE_MONO},
++       {52000, 68000, {15, 11}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_MONO},
++       {68000, 96001, {15, 12}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_MONO},
++       {0}},
++      {
++       /*** 24000hz 2ch ***/
++       {16000, 24000, {2, 1}, 3, {1, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {24000, 28000, {5, 6}, 3, {1, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {28000, 36000, {7, 8}, 2, {2, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {36000, 44000, {10, 9}, 2, {2, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {44000, 52000, {12, 9}, 2, {3, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {52000, 60000, {13, 10}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {60000, 76000, {14, 12}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {76000, 128001, {15, 12}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {0}}},
++
++     {{
++       /*** 32000hz 1ch ***/
++       {24000, 36000, {4, 4}, 3, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {36000, 60000, {7, 6}, 2, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {60000, 72000, {9, 8}, 1, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {72000, 100000, {11, 10}, 1, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {100000, 160001, {13, 11}, 1, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {0}},
++      {
++       /*** 32000hz 2ch ***/
++       {32000, 60000, {4, 4}, 3, {2, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {60000, 80000, {11, 6}, 2, {3, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {80000, 112000, {12, 8}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {112000, 144000, {13, 10}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {144000, 256001, {13, 11}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {0}}},
++
++     {{
++       /*** 44100hz 1ch ***/
++       {12000, 16000, {0, 0}, 0, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {16000, 22000, {1, 1}, 0, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {22000, 30000, {2, 3}, 0, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {30000, 36000, {4, 4}, 0, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {36000, 40000, {5, 4}, 0, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {40000, 48000, {6, 5}, 0, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {48000, 60000, {7, 6}, 1, {3, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {60000, 72000, {9, 6}, 1, {3, 0, 0}, IXHEAACE_SBR_MODE_MONO},
++       {72000, 88000, {10, 8}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_MONO},
++       {88000, 160001, {12, 9}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_MONO},
++       {160001, 288001, {13, 12}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_MONO},
++       {0}},
++      {
++       /*** 44100hz 2ch ***/
++       {12000, 16000, {0, 0}, 0, {2, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {16000, 22000, {1, 0}, 0, {2, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {22000, 26000, {2, 1}, 0, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {26000, 30000, {3, 3}, 0, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {30000, 34000, {3, 3}, 0, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {34000, 38000, {4, 4}, 0, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {38000, 44000, {5, 4}, 0, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {44000, 52000, {6, 4}, 0, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {52000, 60000, {8, 5}, 2, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {60000, 68000, {9, 6}, 2, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {68000, 76000, {10, 6}, 2, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {76000, 90000, {11, 7}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {90000, 112000, {11, 8}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {112000, 132000, {12, 9}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {132000, 180000, {13, 11}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {180000, 288001, {15, 12}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {0}}},
++
++     {{
++       /*** 48000hz 1ch ***/
++       {12000, 16000, {0, 0}, 0, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {16000, 22000, {1, 1}, 0, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {22000, 30000, {2, 3}, 0, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {30000, 36000, {4, 4}, 0, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {36000, 40000, {5, 4}, 0, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {40000, 48000, {6, 5}, 0, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {48000, 60000, {7, 6}, 1, {3, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {60000, 72000, {9, 6}, 1, {3, 0, 0}, IXHEAACE_SBR_MODE_MONO},
++       {72000, 88000, {10, 8}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_MONO},
++       {88000, 160001, {12, 9}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_MONO},
++       {160001, 288001, {13, 12}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_MONO},
++       {0}},
++      {
++       /*** 48000hz 2ch ***/
++       {12000, 16000, {0, 0}, 0, {2, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {16000, 22000, {0, 0}, 0, {2, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {22000, 26000, {1, 1}, 0, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {26000, 30000, {2, 3}, 0, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {30000, 34000, {3, 3}, 0, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {34000, 38000, {4, 4}, 0, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {38000, 44000, {2, 4}, 0, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {44000, 52000, {6, 4}, 0, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {52000, 60000, {8, 5}, 2, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {60000, 68000, {9, 6}, 2, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {68000, 76000, {10, 6}, 2, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {76000, 90000, {11, 7}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {90000, 112000, {11, 8}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {112000, 132000, {12, 9}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {132000, 180000, {13, 11}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {180000, 288001, {15, 12}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {0}}}
++
++    },
++#endif
++#ifndef AAC_NEW_TABLES
+     {{{{0}}},
+ 
+      {{{0}}},
+@@ -824,7 +1060,146 @@ const ixheaace_str_qmf_tabs ixheaace_qmf_tab = {
+        {144000, 176000, {12, 11}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
+        {176000, 256001, {13, 11}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
+        {0}}}}
++#else
++    {{{{0}}},
++
++     {{{0}}},
++
++     {{
++       /*** 12000hz 1ch ***/
++       {8000, 32000, {1, 0}, 3, {1, 0, 6}, IXHEAACE_SBR_MODE_MONO},
++       {0}}, 
++      {
++       {0}}},
++
++     {{
++       /*** 16000hz 1ch ***/
++       {8000, 10000, {1, 0}, 3, {1, 0, 6}, IXHEAACE_SBR_MODE_MONO},
++       {10000, 12000, {2, 6}, 3, {1, 0, 6}, IXHEAACE_SBR_MODE_MONO},
++       {12000, 16000, {4, 6}, 3, {1, 0, 6}, IXHEAACE_SBR_MODE_MONO},
++       {16000, 18000, {4, 9}, 3, {1, 0, 6}, IXHEAACE_SBR_MODE_MONO},
++       {18000, 22000, {7, 12}, 3, {1, 6, 9}, IXHEAACE_SBR_MODE_MONO},
++       {22000, 28000, {6, 9}, 3, {2, 3, 6}, IXHEAACE_SBR_MODE_MONO},
++       {28000, 36000, {8, 12}, 3, {2, 9, 12}, IXHEAACE_SBR_MODE_MONO},
++       {36000, 44000, {10, 12}, 1, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {44000, 64001, {11, 13}, 1, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {0}},
++      {
++       /*** 16000hz 2ch ***/
++       {16000, 24000, {4, 1}, 3, {1, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {24000, 28000, {8, 10}, 3, {1, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {28000, 36000, {10, 12}, 2, {2, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {36000, 44000, {13, 13}, 2, {2, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {44000, 52000, {10, 11}, 2, {2, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {52000, 60000, {15, 13}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {60000, 76000, {14, 13}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {76000, 128001, {15, 13}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {0}}},
++
++     {{
++       /*** 22050hz 1ch ***/
++       {8000, 11369, {1, 1}, 3, {1, 0, 6}, IXHEAACE_SBR_MODE_MONO},
++       {11369, 16000, {1, 3}, 3, {1, 0, 6}, IXHEAACE_SBR_MODE_MONO},
++       {16000, 18000, {2, 4}, 3, {1, 0, 6}, IXHEAACE_SBR_MODE_MONO},
++       {18000, 22000, {4, 5}, 3, {2, 0, 6}, IXHEAACE_SBR_MODE_MONO},
++       {22000, 28000, {5, 6}, 2, {2, 0, 6}, IXHEAACE_SBR_MODE_MONO},
++       {28000, 36000, {7, 8}, 2, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {36000, 44000, {9, 9}, 1, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {44000, 52000, {12, 11}, 1, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {52000, 70000, {13, 11}, 1, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {70000, 88001, {14, 11}, 1, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {0}},
++      {
++       /*** 22050hz 2ch ***/
++       {16000, 24000, {0, 0}, 3, {1, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {24000, 28000, {3, 5}, 3, {1, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {28000, 32000, {3, 7}, 2, {2, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {32000, 36000, {5, 7}, 2, {2, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {36000, 44000, {5, 8}, 2, {2, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {44000, 52000, {7, 8}, 2, {3, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {52000, 60000, {9, 9}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {60000, 76000, {10, 10}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {76000, 82000, {12, 11}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {82000, 128001, {13, 11}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {0}}},
++
++     {{
++       /*** 24000hz 1ch ***/
++       {8000, 12000, {1, 1}, 3, {1, 0, 6}, IXHEAACE_SBR_MODE_MONO},
++       {12000, 16000, {1, 3}, 3, {1, 0, 6}, IXHEAACE_SBR_MODE_MONO},
++       {16000, 18000, {1, 4}, 3, {1, 0, 6}, IXHEAACE_SBR_MODE_MONO},
++       {18000, 22000, {4, 8}, 2, {2, 3, 6}, IXHEAACE_SBR_MODE_MONO},
++       {22000, 28000, {3, 8}, 2, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {28000, 36000, {4, 8}, 2, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {36000, 56000, {8, 9}, 1, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {56000, 70000, {13, 11}, 1, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {70000, 88001, {14, 11}, 1, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {0}},
++      {
++       /*** 24000hz 2ch ***/
++       {16000, 24000, {0, 0}, 3, {1, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {24000, 28000, {3, 5}, 3, {1, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {28000, 36000, {5, 7}, 2, {2, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {36000, 44000, {4, 8}, 2, {2, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {44000, 52000, {6, 8}, 2, {3, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {52000, 60000, {9, 9}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {60000, 76000, {11, 10}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {76000, 88000, {12, 11}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {88000, 128001, {13, 11}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {0}}},
++
++     {{
++       /*** 32000hz 1ch ***/
++       {24000, 36000, {4, 4}, 3, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {36000, 60000, {7, 6}, 2, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {60000, 72000, {9, 8}, 1, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {72000, 100000, {11, 10}, 1, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {100000, 160001, {13, 11}, 1, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {0}},
++      {
++       /*** 32000hz 2ch ***/
++       {32000, 60000, {4, 4}, 3, {2, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {60000, 80000, {7, 6}, 2, {3, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {80000, 112000, {9, 8}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {112000, 144000, {11, 10}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {144000, 256001, {13, 11}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {0}}},
+ 
++     {{
++       /*** 44100hz 1ch ***/
++       {24000, 36000, {4, 9}, 3, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {36000, 60000, {8, 6}, 2, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {60000, 72000, {9, 10}, 1, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {72000, 100000, {11, 11}, 1, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {100000, 160001, {13, 11}, 1, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {0}},
++      {
++       /*** 44100hz 2ch ***/
++       {32000, 60000, {4, 4}, 3, {2, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {60000, 80000, {7, 6}, 2, {3, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {80000, 112000, {10, 8}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {112000, 144000, {12, 10}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {144000, 256001, {13, 11}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {0}}},
++
++     {{
++       /*** 48000hz 1ch ***/
++       {24000, 36000, {4, 3}, 3, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {36000, 60000, {4, 4}, 3, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {60000, 72000, {9, 10}, 1, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {72000, 100000, {11, 11}, 1, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {100000, 160001, {13, 11}, 1, {2, 0, 3}, IXHEAACE_SBR_MODE_MONO},
++       {0}},
++      {
++       /*** 48000hz 2ch ***/
++       {32000, 60000, {4, 9}, 3, {2, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {60000, 80000, {7, 10}, 2, {2, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {80000, 112000, {9, 10}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {112000, 144000, {11, 11}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {144000, 176000, {12, 11}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {176000, 256001, {13, 11}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
++       {0}}}}
++#endif
+ };
+ /*End of QMF Tables*/
+ 
+diff --git a/encoder/ixheaace_sbr_rom.h b/encoder/ixheaace_sbr_rom.h
+index c4dc0e6..02ca808 100644
+--- a/encoder/ixheaace_sbr_rom.h
++++ b/encoder/ixheaace_sbr_rom.h
+@@ -120,8 +120,8 @@ typedef struct {
+   ixheaace_str_frame_info_sbr frame_480_info4_2048;
+   const FLOAT32 ptr_smooth_filter[4];
+   UWORD32 supported_sample_rate[9];
+-  ixheaace_sbr_tuning_tables sbr_tuning_table_lc[10][2][10];
+-  ixheaace_sbr_tuning_tables sbr_tuning_table_ld[10][2][10];
++  ixheaace_sbr_tuning_tables sbr_tuning_table_lc[10][2][20];
++  ixheaace_sbr_tuning_tables sbr_tuning_table_ld[10][2][20];
+ } ixheaace_str_qmf_tabs;
+ 
+ typedef struct {
+@@ -181,6 +181,9 @@ extern const WORD32 vector_offset_def[];
+ extern const WORD32 vector_stop_freq_32[14];
+ extern const WORD32 vector_stop_freq_44[14];
+ extern const WORD32 vector_stop_freq_48[14];
++extern const WORD32 vector_stop_freq_64[14];
++extern const WORD32 vector_stop_freq_88[14];
++extern const WORD32 vector_stop_freq_96[14];
+ 
+ /* Resampler tables */
+ extern const ixheaace_resampler_table ixheaace_resamp_2_to_1_iir_filt_params;
+diff --git a/encoder/ixheaace_write_adts_adif.c b/encoder/ixheaace_write_adts_adif.c
+index 2cda5bb..0442ef8 100644
+--- a/encoder/ixheaace_write_adts_adif.c
++++ b/encoder/ixheaace_write_adts_adif.c
+@@ -310,7 +310,7 @@ WORD32 ia_enhaacplus_enc_write_ADTS_header(pUWORD8 buffer, WORD32 bytes_used, WO
+   if (write_flag) {
+     /* Fixed ADTS header */
+     ia_enhaacplus_enc_putbit(pstr_bitstream, 0xFFFF, 12); /* 12 bit Syncword */
+-    ia_enhaacplus_enc_putbit(pstr_bitstream, 1 /*aacStateStruct->aacConfigSturct.mpegVersion*/,
++    ia_enhaacplus_enc_putbit(pstr_bitstream, 0 /*aacStateStruct->aacConfigSturct.mpegVersion*/,
+                              1);                    /* ID == 0 for MPEG4 AAC, 1 for MPEG2 AAC */
+     ia_enhaacplus_enc_putbit(pstr_bitstream, 0, 2); /* layer == 0 */
+     ia_enhaacplus_enc_putbit(pstr_bitstream, 1, 1); /* protection absent */
+diff --git a/test/encoder/ixheaace_testbench.c b/test/encoder/ixheaace_testbench.c
+index 7b6290d..624a9da 100644
+--- a/test/encoder/ixheaace_testbench.c
++++ b/test/encoder/ixheaace_testbench.c
+@@ -218,6 +218,7 @@ void ia_enhaacplus_enc_print_usage() {
+   printf("\n[-aot:<audio_object_type>]");
+   printf("\n[-esbr:<esbr_flag>]");
+   printf("\n[-full_bandwidth:<enable_full_bandwidth>]");
++  printf("\n[-bandwidth:<bandwidth>]");
+   printf("\n[-max_out_buffer_per_ch:<bitreservoir_size>]");
+   printf("\n[-tree_cfg:<tree_config>]");
+   printf("\n[-usac:<usac_encoding_mode>]");
+@@ -269,6 +270,7 @@ void ia_enhaacplus_enc_print_usage() {
+   printf(
+       "\n  <enable_full_bandwidth> Enable use of full bandwidth of input. Valid values are "
+       "0(disable full bandwidth) and 1(enable full bandwidth). Default is 0.");
++  printf("\n  <bandwidth> specifies the bandwidth for the input (cutoff). Default is 0.");
+   printf("\n  <bitreservoir_size> is the maximum size of bit reservoir to be used.");
+   printf(
+       "\n        Valid values are from -1 to 6144. -1 will omit use of bit reservoir. Default is "
+@@ -362,6 +364,11 @@ static VOID ixheaace_parse_config_param(WORD32 argc, pWORD8 argv[], pVOID ptr_en
+       char *pb_arg_val = (char *)argv[i] + 16;
+       pstr_enc_api->input_config.aac_config.full_bandwidth = atoi(pb_arg_val);
+     }
++    /* Bandwidth */
++    if (!strncmp((const char *)argv[i], "-bandwidth:", 11)) {
++      char *pb_arg_val = (char *)argv[i] + 11;
++      pstr_enc_api->input_config.aac_config.bandwidth = atoi(pb_arg_val);
++    }
+     /* frame size */
+     if (!strncmp((const char *)argv[i], "-framesize:", 11)) {
+       char *pb_arg_val = (char *)argv[i] + 11;
