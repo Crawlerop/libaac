@@ -313,14 +313,18 @@ void aac_encode_strerror(unsigned int error, char *errorStr, int *isFatal) {
   }
 }
 
-int aac_encode_handle_error(IA_ERRORCODE ret, const char *section) {
+int aac_encode_handle_error(AACContext * aac, IA_ERRORCODE ret, const char *section) {
   char strerror[8192] = {0};
   int isFatal;
 
   if (ret == IA_NO_ERROR) return 0;
 
   aac_encode_strerror(ret, strerror, &isFatal);
-  fprintf(stderr, "libaac%s %s: %s\n", isFatal ? " fatal error:" : "", section, strerror);
+  if (aac->errorHandler == NULL) {
+    fprintf(stderr, "libaac%s %s: %s\n", isFatal ? " fatal error:" : "", section, strerror);
+  } else {
+    aac->errorHandler(ret, section, strerror, isFatal, aac->errorHandleCtx);
+  }
 
   return isFatal;
 }
@@ -431,8 +435,11 @@ AACContext * aac_encode_open(AACSettings info) {
   aac_in_config->ui_pcm_wd_sz = info.bitsPerSamples; // Fixed point only although float computing is possible
   aac_in_config->aac_config.length = 0;
 
+  aac->errorHandler = info.errorHandler;
+  aac->errorHandleCtx = info.errorHandleCtx;
+
   ret = ixheaace_create(aac->pstr_in_cfg, aac->pstr_out_cfg);
-  if (aac_encode_handle_error(ret, "init-encoder")) goto fail;
+  if (aac_encode_handle_error(aac, ret, "init-encoder")) goto fail;
 
   aac->no_samples = aac_out_config->input_size / (aac_in_config->ui_pcm_wd_sz == 32 ? 4 : 2);
   aac->max_out_bytes = aac_out_config->mem_info_table[IA_MEMTYPE_OUTPUT].ui_size;
@@ -477,7 +484,7 @@ int aac_encode(AACContext *aac, unsigned char *inData, unsigned int inDataSize, 
   aac->in_buf_offset = 0;
 
   IA_ERRORCODE ret = ixheaace_process(aac_out_config->pv_ia_process_api_obj, aac->pstr_in_cfg, aac->pstr_out_cfg);
-  if (aac_encode_handle_error(ret, "encode")) return -1;
+  if (aac_encode_handle_error(aac, ret, "encode")) return -1;
 
   memcpy(outData, aac_out_buf, aac_out_config->i_out_bytes);
   *outSize = aac_out_config->i_out_bytes;
@@ -650,14 +657,18 @@ void aac_decode_strerror(unsigned int error, char *errorStr, int *isFatal) {
   }
 }
 
-int aac_decode_handle_error(IA_ERRORCODE ret, const char *section) {
+int aac_decode_handle_error(AACDecode * aacDec, IA_ERRORCODE ret, const char *section) {
   char strerror[8192] = {0};
   int isFatal;
 
   if (ret == IA_NO_ERROR) return 0;
 
   aac_decode_strerror(ret, strerror, &isFatal);
-  fprintf(stderr, "libaac%s %s: %s\n", isFatal ? " fatal error:" : "", section, strerror);
+  if (aacDec->errorHandler == NULL) {
+    fprintf(stderr, "libaac%s %s: %s\n", isFatal ? " fatal error:" : "", section, strerror);
+  } else {
+    aacDec->errorHandler(ret, section, strerror, isFatal, aacDec->errorHandleCtx);
+  }
 
   return isFatal;
 }
@@ -679,27 +690,33 @@ AACDecode * aac_decode_open(AACDecodeSettings cfg) {
   if (aacDec->apiObj == NULL) goto fail;
 
   /* 02 - API Init */
+  aacDec->errorHandler = cfg.errorHandler;
+  aacDec->errorHandleCtx = cfg.errorHandleCtx;
+
   ret = ixheaacd_dec_api(aacDec->apiObj, IA_API_CMD_INIT, IA_CMD_TYPE_INIT_API_PRE_CONFIG_PARAMS, NULL);
-  if (aac_decode_handle_error(ret, "preconfig")) goto fail;
+  if (aac_decode_handle_error(aacDec, ret, "preconfig")) goto fail;
 
   /* 03 - Configuration starts here */
   int isMP4 = cfg.ascSize > 0;
   ret = ixheaacd_dec_api(aacDec->apiObj, IA_API_CMD_SET_CONFIG_PARAM, IA_ENHAACPLUS_DEC_CONFIG_PARAM_ISMP4, &isMP4);
-  if (aac_decode_handle_error(ret, "updating mp4 flag")) goto fail;
+  if (aac_decode_handle_error(aacDec, ret, "updating mp4 flag")) goto fail;
 
   ret = ixheaacd_dec_api(aacDec->apiObj, IA_API_CMD_SET_CONFIG_PARAM, IA_ENHAACPLUS_DEC_CONFIG_PARAM_PCM_WDSZ, &cfg.bitsPerSamples);
-  if (aac_decode_handle_error(ret, "updating bits per samples")) goto fail;
+  if (aac_decode_handle_error(aacDec, ret, "updating bits per samples")) goto fail;
 
   int is480FrameSize = cfg.frameSize == 480;
   ret = ixheaacd_dec_api(aacDec->apiObj, IA_API_CMD_SET_CONFIG_PARAM, IA_ENHAACPLUS_DEC_CONFIG_PARAM_FRAMESIZE, &is480FrameSize);
-  if (aac_decode_handle_error(ret, "updating frame length (ld)")) goto fail;
+  if (aac_decode_handle_error(aacDec, ret, "updating frame length (ld)")) goto fail;
 
   int is960FrameSize = cfg.frameSize == 960;
   ret = ixheaacd_dec_api(aacDec->apiObj, IA_API_CMD_SET_CONFIG_PARAM, IA_ENHAACPLUS_DEC_CONFIG_PARAM_FRAMELENGTH_FLAG, &is960FrameSize);
-  if (aac_decode_handle_error(ret, "updating frame length")) goto fail;
+  if (aac_decode_handle_error(aacDec, ret, "updating frame length")) goto fail;
 
   ret = ixheaacd_dec_api(aacDec->apiObj, IA_API_CMD_SET_CONFIG_PARAM, IA_XHEAAC_DEC_CONFIG_PARAM_ESBR, &cfg.eSBR);
-  if (aac_decode_handle_error(ret, "updating esbr")) goto fail;
+  if (aac_decode_handle_error(aacDec, ret, "updating esbr")) goto fail;
+
+  ret = ixheaacd_dec_api(aacDec->apiObj, IA_API_CMD_SET_CONFIG_PARAM, IA_XHEAAC_DEC_CONFIG_ERROR_CONCEALMENT, &cfg.errorConceal);
+  if (aac_decode_handle_error(aacDec, ret, "updating error conceal")) goto fail;
 
   aacDec->eSBR = cfg.eSBR;
   aacDec->asc = cfg.asc;
@@ -708,32 +725,32 @@ AACDecode * aac_decode_open(AACDecodeSettings cfg) {
 
   /* 04 - Decoder Memory */
   ret = ixheaacd_dec_api(aacDec->apiObj, IA_API_CMD_GET_MEMTABS_SIZE, 0, &mem_info_size);
-  if (aac_decode_handle_error(ret, "memtab size")) goto fail;
+  if (aac_decode_handle_error(aacDec, ret, "memtab size")) goto fail;
 
   aacDec->memInfoTab = malloc(mem_info_size);
   if (aacDec->memInfoTab == NULL) goto fail;
 
   ret = ixheaacd_dec_api(aacDec->apiObj, IA_API_CMD_SET_MEMTABS_PTR, 0, aacDec->memInfoTab);
-  if (aac_decode_handle_error(ret, "set memtabs ptr")) goto fail;
+  if (aac_decode_handle_error(aacDec, ret, "set memtabs ptr")) goto fail;
 
   /* 05 - Post Config */
   ret = ixheaacd_dec_api(aacDec->apiObj, IA_API_CMD_INIT, IA_CMD_TYPE_INIT_API_POST_CONFIG_PARAMS, NULL);
-  if (aac_decode_handle_error(ret, "postconfig")) goto fail;
+  if (aac_decode_handle_error(aacDec, ret, "postconfig")) goto fail;
 
   for (int i = 0; i < 4; i++) {
     int ui_size = 0, ui_alignment = 0, ui_type = 0;
 
     /* Get memory size */
     ret = ixheaacd_dec_api(aacDec->apiObj, IA_API_CMD_GET_MEM_INFO_SIZE, i, &ui_size);
-    if (aac_decode_handle_error(ret, "get meminfo 1")) goto fail;
+    if (aac_decode_handle_error(aacDec, ret, "get meminfo 1")) goto fail;
 
     /* Get memory alignment */
     ret = ixheaacd_dec_api(aacDec->apiObj, IA_API_CMD_GET_MEM_INFO_ALIGNMENT, i, &ui_alignment);
-    if (aac_decode_handle_error(ret, "get meminfo 2")) goto fail;
+    if (aac_decode_handle_error(aacDec, ret, "get meminfo 2")) goto fail;
 
     /* Get memory type */
     ret = ixheaacd_dec_api(aacDec->apiObj, IA_API_CMD_GET_MEM_INFO_TYPE, i, &ui_type);
-    if (aac_decode_handle_error(ret, "get meminfo 3")) goto fail;
+    if (aac_decode_handle_error(aacDec, ret, "get meminfo 3")) goto fail;
 
     ui_alignment = (ui_alignment + sizeof(void *) - 1) / sizeof(void *);
     ui_alignment = ui_alignment * sizeof(void *);
@@ -746,7 +763,7 @@ AACDecode * aac_decode_open(AACDecodeSettings cfg) {
 
     /* Set the buffer pointer */
     ret = ixheaacd_dec_api(aacDec->apiObj, IA_API_CMD_SET_MEM_PTR, i, temp);
-    if (aac_decode_handle_error(ret, "set meminfo")) goto fail;
+    if (aac_decode_handle_error(aacDec, ret, "set meminfo")) goto fail;
 
     aacDec->memBuffer[i] = temp;
 
@@ -763,7 +780,7 @@ AACDecode * aac_decode_open(AACDecodeSettings cfg) {
 
 fail:
   if (aacDec) {
-    for (int i = 0; i < 4; i++) free(aacDec->memBuffer[i]);
+    for (int i = 0; i < 4; i++) free_global(aacDec->memBuffer[i]);
 
     free(aacDec->memInfoTab);
     free(aacDec->apiObj);
@@ -777,7 +794,7 @@ void aac_decode_write_buffer(AACDecode *aacd, unsigned char *data, unsigned int 
   
   memcpy(aacd->inBuf, data, dataSize);
   ret = ixheaacd_dec_api(aacd->apiObj, IA_API_CMD_SET_INPUT_BYTES, 0, &dataSize);
-  aac_decode_handle_error(ret, "upload buffer");
+  aac_decode_handle_error(aacd, ret, "upload buffer");
 }
 
 int aac_decode_init(AACDecode *aacd, bool *isInitDone, unsigned int *noBytes) {
@@ -814,7 +831,7 @@ int aac_decode(AACDecode *aacd, unsigned char *inData, unsigned int inDataSize, 
     if (aacd->ascSize > 0 && !aacd->ascDone) {
       aac_decode_write_buffer(aacd, aacd->asc, aacd->ascSize);
       ret = aac_decode_init(aacd, &aacd->isInitDone, bytesRead);
-      if (aac_decode_handle_error(ret, "init-decoder")) return -1;
+      if (aac_decode_handle_error(aacd, ret, "init-decoder")) return -1;
 
       aacd->ascDone = 1;
       timeInited++;
@@ -822,7 +839,7 @@ int aac_decode(AACDecode *aacd, unsigned char *inData, unsigned int inDataSize, 
     
     aac_decode_write_buffer(aacd, inData, inDataSize);
     ret = aac_decode_init(aacd, &aacd->isInitDone, bytesRead);
-    if (aac_decode_handle_error(ret, "init-decoder")) return -1;
+    if (aac_decode_handle_error(aacd, ret, "init-decoder")) return -1;
 
     if (ret == IA_XHEAAC_DEC_EXE_NONFATAL_INSUFFICIENT_INPUT_BYTES) return 0;
 
@@ -855,14 +872,14 @@ int aac_decode(AACDecode *aacd, unsigned char *inData, unsigned int inDataSize, 
 
   aac_decode_write_buffer(aacd, inData, inDataSize);
   ret = aac_decode_execute(aacd, &isDecodeDone, bytesRead, &prerolls);
-  if (aac_decode_handle_error(ret, "decode")) return -1;
+  if (aac_decode_handle_error(aacd, ret, "decode")) return -1;
 
   int prerollOffset = 0;
   *outSize = 0;
 
   do {
     ret = ixheaacd_dec_api(aacd->apiObj, IA_API_CMD_GET_OUTPUT_BYTES, 0, &outByteTemp);
-    if (aac_decode_handle_error(ret, "preroll handling")) return -1;
+    if (aac_decode_handle_error(aacd, ret, "preroll handling")) return -1;
 
     if (aacd->sbrMode && (aacd->aot < 23) && aacd->eSBR) {
       if (aacd->frameCounter > 0)
@@ -884,7 +901,7 @@ int aac_decode(AACDecode *aacd, unsigned char *inData, unsigned int inDataSize, 
 
 void aac_decode_close(AACDecode *aacd) {
   ixheaacd_dec_api(aacd->apiObj, IA_API_CMD_INPUT_OVER, 0, NULL);
-  for (int i = 0; i < 4; i++) free(aacd->memBuffer[i]);
+  for (int i = 0; i < 4; i++) free_global(aacd->memBuffer[i]);
 
   free(aacd->memInfoTab);
   free(aacd->apiObj);

@@ -24,6 +24,8 @@ typedef struct {
   uint32_t ascSize; // AudioSpecific config size
   uint32_t in_buf_offset; // Input buffer offset
   int32_t inputDelay; // Input delay
+  void (* errorHandler)(uint32_t errorCode, const char *section, const char *errorMsg, bool isFatal, void *handle); // Error handler
+  void * errorHandleCtx; // Error handler object
 } AACContext;
 
 typedef struct {
@@ -38,6 +40,8 @@ typedef struct {
   uint32_t frameSize; // Custom frame size
   bool eSBR; // Enhanced SBR
   uint32_t iq; // Inverse quant
+  void (* errorHandler)(uint32_t errorCode, const char *section, const char *errorMsg, bool isFatal, void *handle); // Error handler
+  void * errorHandleCtx; // Error handler object
 } AACSettings;
 
 AACNEXT_API AACContext * aac_encode_open(AACSettings info);
@@ -63,6 +67,8 @@ typedef struct {
   uint32_t sbrMode; // SBR mode
   bool eSBR; // Enhanced SBR
   uint64_t frameCounter; // Frame counter
+  void (* errorHandler)(uint32_t errorCode, const char *section, const char *errorMsg, bool isFatal, void *handle); // Error handler
+  void * errorHandleCtx; // Error handler object
 } AACDecode;
 
 typedef struct {
@@ -72,6 +78,9 @@ typedef struct {
   int32_t bitsPerSamples; // Bits per samples
   uint32_t frameSize; // Frame size
   bool eSBR; // Enhanced SBR
+  bool errorConceal; // Error concealment
+  void (* errorHandler)(uint32_t errorCode, const char *section, const char *errorMsg, bool isFatal, void *handle); // Error handler
+  void * errorHandleCtx; // Error handler object
 } AACDecodeSettings;
 
 AACNEXT_API AACDecode * aac_decode_open(AACDecodeSettings cfg);

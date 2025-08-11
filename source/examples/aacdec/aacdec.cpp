@@ -278,6 +278,7 @@ int main(int argc, char *argv[]) {
     }
 
     outpFile.save(outFile);
+    aac_decode_close(decoder);
 
 #if 0
 #if 0
