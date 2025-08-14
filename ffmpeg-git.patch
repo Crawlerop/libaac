@@ -64,10 +64,10 @@ index f5ec2e01e8..8fcd1a806c 100644
  extern const FFCodec ff_libaribcaption_decoder;
 diff --git a/libavcodec/libaac_nextdec.c b/libavcodec/libaac_nextdec.c
 new file mode 100644
-index 0000000000..c71cc3c8c1
+index 0000000000..7450c14322
 --- /dev/null
 +++ b/libavcodec/libaac_nextdec.c
-@@ -0,0 +1,154 @@
+@@ -0,0 +1,170 @@
 +/*
 + * Libaac-next decoder (libxaac based)
 + * Copyright (c) 2025 Wrapper
@@ -99,16 +99,20 @@ index 0000000000..c71cc3c8c1
 +#include "libavcodec/codec_id.h"
 +#include "libavutil/channel_layout.h"
 +#include "libavutil/error.h"
++#include "libavutil/log.h"
 +#include "libavutil/opt.h"
 +#include "avcodec.h"
 +#include "codec_internal.h"
 +#include "decode.h"
 +#include "libavutil/samplefmt.h"
++#include "libavutil/mem.h"
 +
 +typedef struct {
++    AVClass *class;
 +    AACDecode *decoder;
 +    int error_conceal;
 +    int esbr;
++    unsigned char *decode_buffer;
 +} libaacDecodeCTX;
 +
 +static const AVChannelLayout aac_ch_layouts[6] = {
@@ -157,7 +161,13 @@ index 0000000000..c71cc3c8c1
 +    {
 +        return AVERROR(EINVAL);
 +    }
-+    
++
++    s->decode_buffer = av_mallocz(4096 * 8);
++    if (!s->decode_buffer)
++    {
++        return AVERROR(ENOMEM);
++    }
++
 +    avctx->sample_fmt = AV_SAMPLE_FMT_S16;
 +    return 0;
 +}
@@ -173,16 +183,13 @@ index 0000000000..c71cc3c8c1
 +}
 +
 +static int libaac_decode_frame(AVCodecContext *avctx, AVFrame *frame,
-+                                int *got_frame_ptr, AVPacket *avpkt) 
++                                 int *got_frame_ptr, AVPacket *avpkt)
 +{
 +    libaacDecodeCTX *s = avctx->priv_data;
-+    uint32_t decode_size, frame_size;
++    uint32_t decode_size, read_size;
 +    int ret;
 +
-+    if ((ret = ff_get_buffer(avctx, frame, 0)) < 0)
-+        return ret;
-+
-+    ret = aac_decode(s->decoder, avpkt->data, avpkt->size, frame->data[0], &decode_size, &frame_size);
++    ret = aac_decode(s->decoder, avpkt->data, avpkt->size, s->decode_buffer, &decode_size, &read_size);
 +    if (ret < 0)
 +        return AVERROR_EXTERNAL;
 +
@@ -191,10 +198,19 @@ index 0000000000..c71cc3c8c1
 +    avctx->ch_layout = aac_ch_layouts[s->decoder->noChannels - 1];
 +    avctx->frame_size = 1024;
 +
-+    frame->nb_samples = avctx->frame_size;
++    if (decode_size <= 0)
++        return AVERROR_EOF;
++
++    frame->nb_samples = decode_size / av_get_bytes_per_sample(avctx->sample_fmt) / avctx->ch_layout.nb_channels;
++
++    if ((ret = ff_get_buffer(avctx, frame, 0)) < 0)
++        return ret;
++
++    av_log(avctx, AV_LOG_TRACE, "aac decode size: %d, decode buf: %d\n", decode_size, avctx->ch_layout.nb_channels * frame->nb_samples * av_get_bytes_per_sample(avctx->sample_fmt));
++    memcpy(frame->data[0], s->decode_buffer, decode_size);
 +
 +    *got_frame_ptr = 1;
-+    return frame_size;
++    return read_size;
 +}
 +
 +static av_cold void libaac_decode_flush(AVCodecContext *avctx)
@@ -224,7 +240,7 @@ index 0000000000..c71cc3c8c1
 +};
 diff --git a/libavcodec/libaac_nextenc.c b/libavcodec/libaac_nextenc.c
 new file mode 100755
-index 0000000000..1fbe37dc46
+index 0000000000..c5b21f2095
 --- /dev/null
 +++ b/libavcodec/libaac_nextenc.c
 @@ -0,0 +1,302 @@
@@ -351,7 +367,7 @@ index 0000000000..1fbe37dc46
 +    cfg.frameSize = s->frame_length;
 +    cfg.eSBR = s->esbr;
 +    cfg.iq = s->iq;
-+    
++
 +    cfg.errorHandleCtx = avctx;
 +    cfg.errorHandler = aac_enc_error_handler;
 +
