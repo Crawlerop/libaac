@@ -78,6 +78,7 @@ int main(int argc, char *argv[]) {
     ap.add_argument("input");
     ap.add_argument("output");
 
+    ap.add_argument("-c", "--conceal").help("Error concealment").flag();
     ap.add_argument("-e", "--enhanced-sbr").help("Enhanced SBR").flag();
     ap.add_argument("-f", "--frame-size").help("Frame size").default_value(0).scan<'i', int>();
 
@@ -91,12 +92,14 @@ int main(int argc, char *argv[]) {
 
     auto inFile = ap.get<std::string>("input");
     auto outFile = ap.get<std::string>("output");
+    auto errorConceal = ap.get<bool>("-c");
     auto eSBR = ap.get<bool>("-e");
     auto frameSize = ap.get<int>("-f");
 
     AACDecodeSettings aacConf = {};
     aacConf.bitsPerSamples = 16;
     aacConf.eSBR = eSBR;
+    aacConf.errorConceal = errorConceal;
     aacConf.frameSize = frameSize;
 
     FILE * inpFile = fopen(inFile.c_str(), "rb");

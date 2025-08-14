@@ -899,6 +899,14 @@ int aac_decode(AACDecode *aacd, unsigned char *inData, unsigned int inDataSize, 
   return 1;
 }
 
+void aac_decode_reset(AACDecode *aacd) {
+  ixheaacd_dec_api(aacd->apiObj, IA_API_CMD_INIT, IA_CMD_TYPE_GA_HDR, NULL);
+}
+
+void aac_decode_flush_buffer(AACDecode *aacd) {
+  ixheaacd_dec_api(aacd->apiObj, IA_API_CMD_INIT, IA_CMD_TYPE_FLUSH_MEM, NULL);
+}
+
 void aac_decode_close(AACDecode *aacd) {
   ixheaacd_dec_api(aacd->apiObj, IA_API_CMD_INPUT_OVER, 0, NULL);
   for (int i = 0; i < 4; i++) free_global(aacd->memBuffer[i]);

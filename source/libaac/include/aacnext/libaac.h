@@ -77,14 +77,16 @@ typedef struct {
   uint64_t noChannels; // Number of channels
   int32_t bitsPerSamples; // Bits per samples
   uint32_t frameSize; // Frame size
-  bool eSBR; // Enhanced SBR
-  bool errorConceal; // Error concealment
+  int32_t eSBR; // Enhanced SBR
+  int32_t errorConceal; // Error concealment
   void (* errorHandler)(uint32_t errorCode, const char *section, const char *errorMsg, bool isFatal, void *handle); // Error handler
   void * errorHandleCtx; // Error handler object
 } AACDecodeSettings;
 
 AACNEXT_API AACDecode * aac_decode_open(AACDecodeSettings cfg);
 AACNEXT_API int aac_decode(AACDecode *aacd, unsigned char *inData, unsigned int inDataSize, unsigned char *outData, unsigned int *outSize, unsigned int *bytesRead);
+AACNEXT_API void aac_decode_reset(AACDecode *aacd);
+AACNEXT_API void aac_decode_flush_buffer(AACDecode *aacd);
 AACNEXT_API void aac_decode_close(AACDecode *aacd);
 
 #ifdef __cplusplus
