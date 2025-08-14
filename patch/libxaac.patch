@@ -325,9 +325,32 @@ index eb9e882..e85b300 100644
    const FLOAT32 tns_coeff_3_borders[8];
    const FLOAT32 tns_coeff_4[16];
 diff --git a/encoder/ixheaace_sbr_freq_scaling.c b/encoder/ixheaace_sbr_freq_scaling.c
-index 7eec5a9..e3e7921 100644
+index 7eec5a9..1f08fbd 100644
 --- a/encoder/ixheaace_sbr_freq_scaling.c
 +++ b/encoder/ixheaace_sbr_freq_scaling.c
+@@ -231,16 +231,16 @@ static WORD32 ixheaace_get_stop_freq(WORD32 fs, WORD32 stop_freq) {
+ 
+   switch (fs) {
+     case 16000:
+-      k1_min = ixheaace_stop_freq_16k[0];
+-      v_stop_freq = (WORD32 *)&ixheaace_stop_freq_16k[0];
++      k1_min = ixheaace_usac_stop_freq_16k[0];
++      v_stop_freq = (WORD32 *)&ixheaace_usac_stop_freq_16k[0];
+       break;
+     case 22050:
+-      k1_min = ixheaace_stop_freq_22k[0];
+-      v_stop_freq = (WORD32 *)&ixheaace_stop_freq_22k[0];
++      k1_min = ixheaace_usac_stop_freq_22k[0];
++      v_stop_freq = (WORD32 *)&ixheaace_usac_stop_freq_22k[0];
+       break;
+     case 24000:
+-      k1_min = ixheaace_stop_freq_24k[0];
+-      v_stop_freq = (WORD32 *)&ixheaace_stop_freq_24k[0];
++      k1_min = ixheaace_usac_stop_freq_24k[0];
++      v_stop_freq = (WORD32 *)&ixheaace_usac_stop_freq_24k[0];
+       break;
+     case 32000:
+       k1_min = 32;
 @@ -260,6 +260,24 @@ static WORD32 ixheaace_get_stop_freq(WORD32 fs, WORD32 stop_freq) {
        v_stop_freq = (WORD32 *)vector_stop_freq_48;
        break;
