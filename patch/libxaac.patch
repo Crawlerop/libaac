@@ -423,6 +423,23 @@ index 893d215..b8594e8 100644
      pstr_env_enc->str_sbr_hdr.sample_rate_mode = IXHEAACE_DUAL_RATE;
      if (params->sbr_codec == USAC_SBR) {
        pstr_env_enc->str_sbr_cfg.sample_freq = 2 * params->codec_settings.sample_freq;
+diff --git a/encoder/ixheaace_sbr_noise_floor_est.c b/encoder/ixheaace_sbr_noise_floor_est.c
+index c5fcd99..344d2b0 100644
+--- a/encoder/ixheaace_sbr_noise_floor_est.c
++++ b/encoder/ixheaace_sbr_noise_floor_est.c
+@@ -136,8 +136,10 @@ static VOID ia_enhaacplus_enc_qmf_based_noise_floor_detection(
+       mean_org += ton_org;
+       mean_sbr += ton_sbr;
+     }
+-    mean_org /= (stop_channel - start_channel);
+-    mean_sbr /= (stop_channel - start_channel);
++    if ((stop_channel - start_channel) > 0) {
++      mean_org /= (stop_channel - start_channel);
++      mean_sbr /= (stop_channel - start_channel);
++    }
+   }
+ 
+   if (mean_org < SBR_TON_MEAN_P0009 && mean_sbr < SBR_TON_MEAN_P0009) {
 diff --git a/encoder/ixheaace_sbr_rom.c b/encoder/ixheaace_sbr_rom.c
 index 90e94c5..576b3bc 100644
 --- a/encoder/ixheaace_sbr_rom.c
