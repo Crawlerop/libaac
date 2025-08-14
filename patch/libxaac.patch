@@ -67,7 +67,7 @@ index 982a6aa..d827687 100644
      WORD8 *out_24bit = (WORD8 *)out_buf;
      for (i = 0; i < num; i++) {
 diff --git a/encoder/ixheaace_api.c b/encoder/ixheaace_api.c
-index 6d5c47e..ea870d4 100644
+index 6d5c47e..749cac6 100644
 --- a/encoder/ixheaace_api.c
 +++ b/encoder/ixheaace_api.c
 @@ -831,7 +831,7 @@ static IA_ERRORCODE ixheaace_set_config_params(ixheaace_api_struct *pstr_api_str
@@ -104,6 +104,15 @@ index 6d5c47e..ea870d4 100644
    }
  
    return IA_NO_ERROR;
+@@ -2474,7 +2478,7 @@ static IA_ERRORCODE ia_enhaacplus_enc_init(ixheaace_api_struct *pstr_api_struct,
+           pstr_aac_config->bit_rate,
+           (pstr_api_struct->pstr_state->mps_enable
+                ? 1
+-               : pstr_api_struct->config[ele_idx].chmode_nchannels),
++               : pstr_aac_config->num_out_channels),
+           pstr_aac_config->sample_rate, &core_sample_rate,
+           pstr_api_struct->spectral_band_replication_tabs.ptr_qmf_tab,
+           pstr_api_struct->pstr_state->aot)) {
 @@ -2692,6 +2696,7 @@ static IA_ERRORCODE ia_enhaacplus_enc_execute(ixheaace_api_struct *pstr_api_stru
    iexheaac_encoder_str **pstr_aac_enc;
    iaace_config *pstr_aac_config;
