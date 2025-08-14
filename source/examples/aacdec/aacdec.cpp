@@ -176,6 +176,7 @@ int main(int argc, char *argv[]) {
     int16_t *outBuf = new int16_t[decoder->outBufSize / sizeof(int16_t)];
     uint32_t outSize;
     uint32_t nBytes;
+    int32_t res = 0;
 
     ProgressBar bar{
         option::BarWidth{50},
@@ -246,6 +247,7 @@ int main(int argc, char *argv[]) {
             int ret = aac_decode(decoder, readBuf, bufReadSize, (uint8_t *)outBuf, &outSize, &nBytes);
             if (ret == -1) {
                 std::cerr << "Decode frame " << adtsCount << " failed" << std::endl;
+                res = 1;
                 break;
             }
 
@@ -280,6 +282,7 @@ int main(int argc, char *argv[]) {
     outpFile.save(outFile);
     aac_decode_close(decoder);
 
+    return res;
 #if 0
 #if 0
     AACFileReader inData("asc.es", 4096);
