@@ -21,7 +21,7 @@ index 5d9cd37..3196501 100644
  
  # Adds libraries needed for executables
 diff --git a/decoder/ixheaacd_api.c b/decoder/ixheaacd_api.c
-index 5e6a0ac..53cb371 100644
+index 5e6a0ac..3504a10 100644
 --- a/decoder/ixheaacd_api.c
 +++ b/decoder/ixheaacd_api.c
 @@ -579,7 +579,7 @@ IA_ERRORCODE ixheaacd_dec_api(pVOID p_ia_xheaac_dec_obj, WORD32 i_cmd,
@@ -46,7 +46,7 @@ index 5e6a0ac..53cb371 100644
      p_obj_exhaacplus_dec->aac_config.ui_samp_freq = sample_rate;
      p_state_enhaacplus_dec->ui_init_done = 1;
 +    p_state_enhaacplus_dec->init_sbr_flag = sbr_present_flag;
-+    p_state_enhaacplus_dec->init_ps_flag = p_obj_exhaacplus_dec->aac_config.ui_sbr_mode == 1;
++    p_state_enhaacplus_dec->init_ps_flag = !p_obj_exhaacplus_dec->aac_config.ui_channel_mode;
  
      memcpy(it_bit_buff, &temp_bit_buff, sizeof(struct ia_bit_buf_struct));
  
