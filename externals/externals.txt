@@ -1,13 +1,14 @@
 include(ExternalProject)
 ExternalProject_Add(libxaac
-  GIT_REPOSITORY    http://github.com/ittiam-systems/libxaac.git
-  GIT_TAG           main
+  URL               https://github.com/ittiam-systems/libxaac/archive/eb62778aee21a98b9f6f5c27e0a1f2546a175172.zip
+  DOWNLOAD_EXTRACT_TIMESTAMP OFF
+  UPDATE_DISCONNECTED 1
   CMAKE_ARGS        -DCMAKE_BUILD_TYPE=Release
   SOURCE_DIR        "${CMAKE_SOURCE_DIR}/externals/libxaac/"
   BINARY_DIR        ""
   INSTALL_COMMAND   ""
   TEST_COMMAND      ""
-  PATCH_COMMAND     git apply --reject --whitespace=fix "${CMAKE_SOURCE_DIR}/patch/libxaac.patch"
+  PATCH_COMMAND     patch -p1 < "${CMAKE_SOURCE_DIR}/patch/libxaac.patch"
 )
 
 ExternalProject_Get_Property(libxaac BINARY_DIR)
