@@ -137,11 +137,13 @@ target_link_directories(${target}
 
 target_link_libraries(${target}
     PRIVATE
-    xaacenc
-    xaacdec
+    $<$<BOOL:${BUILD_SHARED_LIBS}>:xaacenc>
+    $<$<BOOL:${BUILD_SHARED_LIBS}>:xaacdec>
 
     PUBLIC
     ${DEFAULT_LIBRARIES}
+    $<$<NOT:$<BOOL:${BUILD_SHARED_LIBS}>>:xaacenc>
+    $<$<NOT:$<BOOL:${BUILD_SHARED_LIBS}>>:xaacdec>
 
     INTERFACE
 )
@@ -233,5 +235,13 @@ install(EXPORT ${target}-export
 )
 
 # pkg-config
+if (BUILD_SHARED_LIBS)
+    set(LIBAAC_LINKERS "-l${target}")
+else()
+    set(LIBAAC_LINKERS "-l${target} -lxaacenc -lxaacdec -lm")
+    install(FILES ${PROJECT_BINARY_DIR}/libxaac-prefix/src/libxaac-build/libxaacdec.a DESTINATION ${INSTALL_LIB}/ COMPONENT dev)
+    install(FILES ${PROJECT_BINARY_DIR}/libxaac-prefix/src/libxaac-build/libxaacenc.a DESTINATION ${INSTALL_LIB}/ COMPONENT dev)
+endif()
+
 configure_file(pkg-config.pc.in ${CMAKE_CURRENT_BINARY_DIR}/pkgconfig/${META_PROJECT_NAME}.pc @ONLY)
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/pkgconfig/${META_PROJECT_NAME}.pc DESTINATION ${INSTALL_LIB}/pkgconfig COMPONENT dev)

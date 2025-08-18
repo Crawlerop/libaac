@@ -67,6 +67,10 @@ target_include_directories(${target}
 # 
 # Libraries
 # 
+target_link_directories(${target}
+    PRIVATE
+    ${XAAC_BIN_DIR}
+)
 
 target_link_libraries(${target}
     PRIVATE

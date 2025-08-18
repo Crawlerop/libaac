@@ -7,5 +7,5 @@ toolsdir=${exec_prefix}/bin
 Name: @PROJECT_NAME@
 Description: @PROJECT_DESCRIPTION@
 Version: @PROJECT_VERSION@
-Libs: -L${libdir} -l@target@ 
+Libs: -L${libdir} @LIBAAC_LINKERS@ 
 Cflags: -I${includedir} 

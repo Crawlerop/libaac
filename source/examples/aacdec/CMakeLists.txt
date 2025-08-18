@@ -55,6 +55,10 @@ set_target_properties(${target}
 # 
 # Include directories
 # 
+target_link_directories(${target}
+    PRIVATE
+    ${XAAC_BIN_DIR}
+)
 
 target_include_directories(${target}
     PRIVATE
