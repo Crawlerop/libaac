@@ -1,5 +1,5 @@
 diff --git a/configure b/configure
-index 727c3daea8..540219d6bf 100755
+index 416cd2d1d6..eaa52b63ad 100755
 --- a/configure
 +++ b/configure
 @@ -212,6 +212,7 @@ External library support:
@@ -28,7 +28,7 @@ index 727c3daea8..540219d6bf 100755
  libaom_av1_decoder_deps="libaom"
  libaom_av1_encoder_deps="libaom"
  libaom_av1_encoder_select="extract_extradata_bsf dovi_rpuenc"
-@@ -7017,6 +7022,7 @@ enabled gnutls            && require_pkg_config gnutls gnutls gnutls/gnutls.h gn
+@@ -7016,6 +7021,7 @@ enabled gnutls            && require_pkg_config gnutls gnutls gnutls/gnutls.h gn
  enabled jni               && { [ $target_os = "android" ] && check_headers jni.h && enabled pthreads || die "ERROR: jni not found"; }
  enabled ladspa            && require_headers "ladspa.h dlfcn.h"
  enabled lcms2             && require_pkg_config lcms2 "lcms2 >= 2.13" lcms2.h cmsCreateContext
@@ -37,7 +37,7 @@ index 727c3daea8..540219d6bf 100755
  enabled liboapv           && require_pkg_config liboapv "oapv >= 0.2.0.0" "oapv/oapv.h" oapve_encode
  enabled libaribb24        && { check_pkg_config libaribb24 "aribb24 > 1.0.3" "aribb24/aribb24.h" arib_instance_new ||
 diff --git a/libavcodec/Makefile b/libavcodec/Makefile
-index 83ef92963a..45d634ae8f 100644
+index fb22541f8d..740a008131 100644
 --- a/libavcodec/Makefile
 +++ b/libavcodec/Makefile
 @@ -1144,6 +1144,8 @@ OBJS-$(CONFIG_ALAC_AT_ENCODER)            += audiotoolboxenc.o
@@ -240,10 +240,10 @@ index 0000000000..7450c14322
 +};
 diff --git a/libavcodec/libaac_nextenc.c b/libavcodec/libaac_nextenc.c
 new file mode 100755
-index 0000000000..c5b21f2095
+index 0000000000..8bc7fccb0f
 --- /dev/null
 +++ b/libavcodec/libaac_nextenc.c
-@@ -0,0 +1,302 @@
+@@ -0,0 +1,305 @@
 +/*
 + * Libaac-next encoder (libxaac based)
 + * Copyright (c) 2025 Wrapper
@@ -272,13 +272,14 @@ index 0000000000..c5b21f2095
 +
 +#include <libaac.h>
 +
-+#include "libavcodec/defs.h"
 +#include "libavutil/channel_layout.h"
++#include "libavutil/internal.h"
 +#include "libavutil/intreadwrite.h"
 +#include "libavutil/log.h"
 +#include "libavutil/opt.h"
 +#include "libavutil/mem.h"
 +#include "avcodec.h"
++#include "defs.h"
 +#include "audio_frame_queue.h"
 +#include "codec_internal.h"
 +#include "encode.h"
@@ -362,6 +363,10 @@ index 0000000000..c5b21f2095
 +        case AV_PROFILE_AAC_ELD:
 +            cfg.profile = AAC_ELD;
 +            break;
++
++        default:
++            av_log(avctx, AV_LOG_ERROR, "unsupported profile, supported profiles are LC, HE, HEv2, LD and ELD\n");
++            return AVERROR(EINVAL);
 +    }
 +    cfg.tns = s->tns;
 +    cfg.frameSize = s->frame_length;
@@ -414,10 +419,9 @@ index 0000000000..c5b21f2095
 +
 +    if (!frame)
 +    {
-+        int isFlush = s->encoder->in_buf_offset <= 0;
-+        av_log(avctx, AV_LOG_TRACE, "frame_queue_count: %d, frame_queue_size: %d, in_buf: %d, is_flush: %d, flush_delay: %d\n", s->afq.frame_count, s->afq.remaining_samples, s->encoder->in_buf_offset, isFlush, s->flush_delay);
++        av_log(avctx, AV_LOG_TRACE, "flush_delay: %d\n", s->flush_delay);
 +
-+        if (isFlush && s->flush_delay <= 0)
++        if (s->flush_delay <= 0)
 +            return 0;
 +
 +        /* Flushing */
@@ -426,8 +430,7 @@ index 0000000000..c5b21f2095
 +            return AVERROR(EINVAL);
 +        }
 +
-+        if (isFlush)
-+            s->flush_delay -= avctx->frame_size;
++        s->flush_delay -= avctx->frame_size;
 +    }
 +    else
 +    {
@@ -435,7 +438,7 @@ index 0000000000..c5b21f2095
 +        if ((ret = ff_af_queue_add(&s->afq, frame)) < 0)
 +            return ret;
 +
-+        int encodeSize = (avctx->sample_fmt == AV_SAMPLE_FMT_FLT ? 4 : 2) * avctx->ch_layout.nb_channels * frame->nb_samples;
++        int encodeSize = av_get_bytes_per_sample(avctx->sample_fmt) * avctx->ch_layout.nb_channels * frame->nb_samples;
 +        av_log(avctx, AV_LOG_TRACE, "encode size: %d\n", encodeSize);
 +
 +        if ((ret = aac_encode(s->encoder, frame->data[0], encodeSize, pkt->data, (unsigned int *)&pkt->size)) < 0)
