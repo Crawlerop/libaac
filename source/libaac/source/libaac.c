@@ -799,24 +799,28 @@ void aac_decode_write_buffer(AACDecode *aacd, unsigned char *data, unsigned int 
 
 int aac_decode_init(AACDecode *aacd, bool *isInitDone, unsigned int *noBytes) {
   IA_ERRORCODE ret;
+  int done;
 
   ret = ixheaacd_dec_api(aacd->apiObj, IA_API_CMD_INIT, IA_CMD_TYPE_INIT_PROCESS, NULL);
 
-  ixheaacd_dec_api(aacd->apiObj, IA_API_CMD_INIT, IA_CMD_TYPE_INIT_DONE_QUERY, isInitDone);
+  ixheaacd_dec_api(aacd->apiObj, IA_API_CMD_INIT, IA_CMD_TYPE_INIT_DONE_QUERY, &done);
   ixheaacd_dec_api(aacd->apiObj, IA_API_CMD_GET_CURIDX_INPUT_BUF, 0, noBytes);
 
+  *isInitDone = done;
   return ret;
 }
 
 int aac_decode_execute(AACDecode *aacd, bool *isDone, unsigned int *noBytesIn, int *preroll) {
   IA_ERRORCODE ret;
+  int done;
   
   ret = ixheaacd_dec_api(aacd->apiObj, IA_API_CMD_EXECUTE, IA_CMD_TYPE_DO_EXECUTE, NULL);
 
-  ixheaacd_dec_api(aacd->apiObj, IA_API_CMD_EXECUTE, IA_CMD_TYPE_DONE_QUERY, isDone);
+  ixheaacd_dec_api(aacd->apiObj, IA_API_CMD_EXECUTE, IA_CMD_TYPE_DONE_QUERY, &done);
   ixheaacd_dec_api(aacd->apiObj, IA_API_CMD_GET_CURIDX_INPUT_BUF, 0, noBytesIn);
   ixheaacd_dec_api(aacd->apiObj, IA_API_CMD_GET_CONFIG_PARAM, IA_ENHAACPLUS_DEC_CONFIG_GET_NUM_PRE_ROLL_FRAMES, preroll);
 
+  *isDone = done;
   return ret;
 }
 
