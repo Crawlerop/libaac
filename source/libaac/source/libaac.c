@@ -905,10 +905,24 @@ int aac_decode(AACDecode *aacd, unsigned char *inData, unsigned int inDataSize, 
 
 void aac_decode_reset(AACDecode *aacd) {
   ixheaacd_dec_api(aacd->apiObj, IA_API_CMD_INIT, IA_CMD_TYPE_GA_HDR, NULL);
+  ixheaacd_dec_api(aacd->apiObj, IA_API_CMD_INIT, IA_CMD_TYPE_GA_HDR, NULL);
+
+  aacd->isInitDone = false;
+  aacd->ascDone = false;
+
+  int isMP4 = aacd->ascSize > 0;
+  ixheaacd_dec_api(aacd->apiObj, IA_API_CMD_SET_CONFIG_PARAM, IA_ENHAACPLUS_DEC_CONFIG_PARAM_ISMP4, &isMP4);
 }
 
 void aac_decode_flush_buffer(AACDecode *aacd) {
   ixheaacd_dec_api(aacd->apiObj, IA_API_CMD_INIT, IA_CMD_TYPE_FLUSH_MEM, NULL);
+  ixheaacd_dec_api(aacd->apiObj, IA_API_CMD_INIT, IA_CMD_TYPE_FLUSH_MEM, NULL);
+
+  aacd->isInitDone = false;
+  aacd->ascDone = false;
+
+  int isMP4 = aacd->ascSize > 0;
+  ixheaacd_dec_api(aacd->apiObj, IA_API_CMD_SET_CONFIG_PARAM, IA_ENHAACPLUS_DEC_CONFIG_PARAM_ISMP4, &isMP4);
 }
 
 void aac_decode_close(AACDecode *aacd) {
