@@ -64,7 +64,7 @@ index f5ec2e01e8..8fcd1a806c 100644
  extern const FFCodec ff_libaribcaption_decoder;
 diff --git a/libavcodec/libaac_nextdec.c b/libavcodec/libaac_nextdec.c
 new file mode 100644
-index 0000000000..3de2fd79e6
+index 0000000000..61345ec021
 --- /dev/null
 +++ b/libavcodec/libaac_nextdec.c
 @@ -0,0 +1,171 @@
@@ -126,8 +126,8 @@ index 0000000000..3de2fd79e6
 +};
 +
 +static const AVOption aac_dec_options[] = {
-+    { "conceal", "Error concealment", offsetof(libaacDecodeCTX, error_conceal), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 1, AV_OPT_FLAG_AUDIO_PARAM | AV_OPT_FLAG_DECODING_PARAM },
-+    { "esbr", "Enable the use of Enhanced SBR", offsetof(libaacDecodeCTX, esbr), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 1, AV_OPT_FLAG_AUDIO_PARAM | AV_OPT_FLAG_DECODING_PARAM },
++    { "conceal", "Error concealment", offsetof(libaacDecodeCTX, error_conceal), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, AV_OPT_FLAG_AUDIO_PARAM | AV_OPT_FLAG_DECODING_PARAM },
++    { "esbr", "Enable the use of Enhanced SBR", offsetof(libaacDecodeCTX, esbr), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, AV_OPT_FLAG_AUDIO_PARAM | AV_OPT_FLAG_DECODING_PARAM },
 +    { NULL }
 +};
 +
@@ -241,7 +241,7 @@ index 0000000000..3de2fd79e6
 +};
 diff --git a/libavcodec/libaac_nextenc.c b/libavcodec/libaac_nextenc.c
 new file mode 100755
-index 0000000000..6a1e4f58ea
+index 0000000000..3c34c24a63
 --- /dev/null
 +++ b/libavcodec/libaac_nextenc.c
 @@ -0,0 +1,306 @@
@@ -304,11 +304,11 @@ index 0000000000..6a1e4f58ea
 +} libaacEncodeCTX;
 +
 +static const AVOption aac_enc_options[] = {
-+    { "eld_v2", "Enable ELDv2 (LD-MPS extension for ELD stereo signals)", offsetof(libaacEncodeCTX, eld_v2), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 1, AV_OPT_FLAG_AUDIO_PARAM | AV_OPT_FLAG_ENCODING_PARAM },
-+    { "esbr", "Enable the use of Enhanced SBR", offsetof(libaacEncodeCTX, esbr), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 1, AV_OPT_FLAG_AUDIO_PARAM | AV_OPT_FLAG_ENCODING_PARAM },
++    { "eld_v2", "Enable ELDv2 (LD-MPS extension for ELD stereo signals)", offsetof(libaacEncodeCTX, eld_v2), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, AV_OPT_FLAG_AUDIO_PARAM | AV_OPT_FLAG_ENCODING_PARAM },
++    { "esbr", "Enable the use of Enhanced SBR", offsetof(libaacEncodeCTX, esbr), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, AV_OPT_FLAG_AUDIO_PARAM | AV_OPT_FLAG_ENCODING_PARAM },
 +    { "frame_length", "The desired frame length", offsetof(libaacEncodeCTX, frame_length), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 1024, AV_OPT_FLAG_AUDIO_PARAM | AV_OPT_FLAG_ENCODING_PARAM },
 +    { "iq", "Inverse quantization", offsetof(libaacEncodeCTX, frame_length), AV_OPT_TYPE_INT, { .i64 = 2 }, 0, 2, AV_OPT_FLAG_AUDIO_PARAM | AV_OPT_FLAG_ENCODING_PARAM },
-+    { "tns", "Temporal Noise Shaping", offsetof(libaacEncodeCTX, tns), AV_OPT_TYPE_INT, { .i64 = 1 }, 0, 1, AV_OPT_FLAG_AUDIO_PARAM | AV_OPT_FLAG_ENCODING_PARAM },
++    { "tns", "Temporal Noise Shaping", offsetof(libaacEncodeCTX, tns), AV_OPT_TYPE_BOOL, { .i64 = 1 }, 0, 1, AV_OPT_FLAG_AUDIO_PARAM | AV_OPT_FLAG_ENCODING_PARAM },
 +    FF_AAC_PROFILE_OPTS
 +    { NULL }
 +};
