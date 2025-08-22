@@ -416,7 +416,7 @@ index 7eec5a9..1f08fbd 100644
        v_stop_freq = (WORD32 *)vector_stop_freq_32;
        k1_min = 21; /* illegal fs  */
 diff --git a/encoder/ixheaace_sbr_main.c b/encoder/ixheaace_sbr_main.c
-index 893d215..b8594e8 100644
+index 893d215..62928da 100644
 --- a/encoder/ixheaace_sbr_main.c
 +++ b/encoder/ixheaace_sbr_main.c
 @@ -100,7 +100,7 @@ FLOAT32 *ixheaace_get_hbe_resample_buffer(ixheaace_pstr_sbr_enc pstr_env_enc) {
@@ -449,7 +449,7 @@ index 893d215..b8594e8 100644
        (params->codec_settings.num_channels == 2) ? params->stereo_mode : IXHEAACE_SBR_MODE_MONO;
  
 -  if (params->codec_settings.sample_freq <= 24000) {
-+  if (params->codec_settings.sample_freq <= 24000 || !params->is_ld_sbr) {
++  if (1) {
      pstr_env_enc->str_sbr_hdr.sample_rate_mode = IXHEAACE_DUAL_RATE;
      if (params->sbr_codec == USAC_SBR) {
        pstr_env_enc->str_sbr_cfg.sample_freq = 2 * params->codec_settings.sample_freq;
