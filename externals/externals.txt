@@ -1,6 +1,6 @@
 include(ExternalProject)
 ExternalProject_Add(libxaac
-  URL               https://github.com/ittiam-systems/libxaac/archive/eb62778aee21a98b9f6f5c27e0a1f2546a175172.zip
+  URL               https://github.com/ittiam-systems/libxaac/archive/ae572598c3d9f4757fd743553750981c673ddfb5.zip
   DOWNLOAD_EXTRACT_TIMESTAMP OFF
   UPDATE_DISCONNECTED 1
   CMAKE_ARGS        -DCMAKE_BUILD_TYPE=Release
