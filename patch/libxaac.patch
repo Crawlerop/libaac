@@ -471,7 +471,7 @@ index c5fcd99..344d2b0 100644
  
    if (mean_org < SBR_TON_MEAN_P0009 && mean_sbr < SBR_TON_MEAN_P0009) {
 diff --git a/encoder/ixheaace_sbr_rom.c b/encoder/ixheaace_sbr_rom.c
-index 90e94c5..0a739ed 100644
+index 90e94c5..bb52192 100644
 --- a/encoder/ixheaace_sbr_rom.c
 +++ b/encoder/ixheaace_sbr_rom.c
 @@ -48,6 +48,9 @@ const WORD32 vector_offset_def[] = {0, 1, 2, 3, 4, 5, 6, 7, 9, 11, 13, 16, 20, 2
@@ -681,7 +681,7 @@ index 90e94c5..0a739ed 100644
 +      {
 +       /*** 48000hz 2ch SBR_AAC ***/
 +       {32000, 60000, {4, 9}, 3, {2, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
-+       {60000, 80000, {7, 10}, 2, {3, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
++       {60000, 80000, {7, 10}, 2, {2, 0, -3}, IXHEAACE_SBR_MODE_SWITCH_LRC},
 +       {80000, 112000, {9, 10}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
 +       {112000, 144000, {11, 11}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
 +       {144000, 576001, {13, 11}, 1, {3, 0, -3}, IXHEAACE_SBR_MODE_LEFT_RIGHT},
