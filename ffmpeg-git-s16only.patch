@@ -1,0 +1,553 @@
+diff --git a/configure b/configure
+index e1809a3e58..fa4fbfb1cb 100755
+--- a/configure
++++ b/configure
+@@ -212,6 +212,7 @@ External library support:
+   --enable-jni             enable JNI support [no]
+   --enable-ladspa          enable LADSPA audio filtering [no]
+   --enable-lcms2           enable ICC profile support via LittleCMS 2 [no]
++  --enable-libaac-next     enable AAC encoding using libaac-next [no]
+   --enable-libaom          enable AV1 video encoding/decoding via libaom [no]
+   --enable-libaribb24      enable ARIB text and caption decoding via libaribb24 [no]
+   --enable-libaribcaption  enable ARIB text and caption decoding via libaribcaption [no]
+@@ -1901,6 +1902,7 @@ EXTERNAL_LIBRARY_NONFREE_LIST="
+ 
+ EXTERNAL_LIBRARY_VERSION3_LIST="
+     gmp
++    libaac_next
+     libaribb24
+     liblensfun
+     libopencore_amrnb
+@@ -3592,6 +3594,9 @@ hevc_videotoolbox_encoder_deps="pthreads"
+ hevc_videotoolbox_encoder_select="atsc_a53 videotoolbox_encoder"
+ prores_videotoolbox_encoder_deps="pthreads"
+ prores_videotoolbox_encoder_select="videotoolbox_encoder"
++libaac_next_decoder_deps="libaac_next"
++libaac_next_encoder_deps="libaac_next"
++libaac_next_encoder_select="audio_frame_queue"
+ libaom_av1_decoder_deps="libaom"
+ libaom_av1_encoder_deps="libaom"
+ libaom_av1_encoder_select="extract_extradata_bsf dovi_rpuenc"
+@@ -7016,6 +7021,7 @@ enabled gnutls            && require_pkg_config gnutls gnutls gnutls/gnutls.h gn
+ enabled jni               && { [ $target_os = "android" ] && check_headers jni.h && enabled pthreads || die "ERROR: jni not found"; }
+ enabled ladspa            && require_headers "ladspa.h dlfcn.h"
+ enabled lcms2             && require_pkg_config lcms2 "lcms2 >= 2.13" lcms2.h cmsCreateContext
++enabled libaac_next       && require_pkg_config libaac_next "libaac >= 1.0.0" libaac.h aac_encode_open
+ enabled libaom            && require_pkg_config libaom "aom >= 2.0.0" aom/aom_codec.h aom_codec_version
+ enabled liboapv           && require_pkg_config liboapv "oapv >= 0.2.0.0" "oapv/oapv.h" oapve_encode
+ enabled libaribb24        && { check_pkg_config libaribb24 "aribb24 > 1.0.3" "aribb24/aribb24.h" arib_instance_new ||
+diff --git a/libavcodec/Makefile b/libavcodec/Makefile
+index fb22541f8d..740a008131 100644
+--- a/libavcodec/Makefile
++++ b/libavcodec/Makefile
+@@ -1144,6 +1144,8 @@ OBJS-$(CONFIG_ALAC_AT_ENCODER)            += audiotoolboxenc.o
+ OBJS-$(CONFIG_ILBC_AT_ENCODER)            += audiotoolboxenc.o
+ OBJS-$(CONFIG_PCM_ALAW_AT_ENCODER)        += audiotoolboxenc.o
+ OBJS-$(CONFIG_PCM_MULAW_AT_ENCODER)       += audiotoolboxenc.o
++OBJS-$(CONFIG_LIBAAC_NEXT_ENCODER)        += libaac_nextenc.o
++OBJS-$(CONFIG_LIBAAC_NEXT_DECODER)        += libaac_nextdec.o
+ OBJS-$(CONFIG_LIBAOM_AV1_DECODER)         += libaomdec.o libaom.o
+ OBJS-$(CONFIG_LIBAOM_AV1_ENCODER)         += libaomenc.o libaom.o
+ OBJS-$(CONFIG_LIBARIBB24_DECODER)         += libaribb24.o ass.o
+diff --git a/libavcodec/allcodecs.c b/libavcodec/allcodecs.c
+index f5ec2e01e8..8fcd1a806c 100644
+--- a/libavcodec/allcodecs.c
++++ b/libavcodec/allcodecs.c
+@@ -766,6 +766,8 @@ extern const FFCodec ff_pcm_mulaw_at_encoder;
+ extern const FFCodec ff_pcm_mulaw_at_decoder;
+ extern const FFCodec ff_qdmc_at_decoder;
+ extern const FFCodec ff_qdm2_at_decoder;
++extern const FFCodec ff_libaac_next_encoder;
++extern const FFCodec ff_libaac_next_decoder;
+ extern FFCodec ff_libaom_av1_encoder;
+ /* preferred over libaribb24 */
+ extern const FFCodec ff_libaribcaption_decoder;
+diff --git a/libavcodec/libaac_nextdec.c b/libavcodec/libaac_nextdec.c
+new file mode 100644
+index 0000000000..61345ec021
+--- /dev/null
++++ b/libavcodec/libaac_nextdec.c
+@@ -0,0 +1,171 @@
++/*
++ * Libaac-next decoder (libxaac based)
++ * Copyright (c) 2025 Wrapper
++ *
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * FFmpeg is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with FFmpeg; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
++ */
++
++/**
++ * @file
++ * Interface to libaac-next decoder.
++ */
++
++#include "avcodec.h"
++#include <libaac.h>
++#include "libavcodec/codec_id.h"
++#include "libavutil/channel_layout.h"
++#include "libavutil/error.h"
++#include "libavutil/log.h"
++#include "libavutil/opt.h"
++#include "avcodec.h"
++#include "codec_internal.h"
++#include "decode.h"
++#include "libavutil/samplefmt.h"
++#include "libavutil/mem.h"
++
++typedef struct {
++    AVClass *class;
++    AACDecode *decoder;
++    int error_conceal;
++    int esbr;
++    unsigned char *decode_buffer;
++} libaacDecodeCTX;
++
++static const AVChannelLayout aac_ch_layouts[7] = {
++    AV_CHANNEL_LAYOUT_MONO,
++    AV_CHANNEL_LAYOUT_STEREO,
++    AV_CHANNEL_LAYOUT_SURROUND,
++    AV_CHANNEL_LAYOUT_4POINT0,
++    AV_CHANNEL_LAYOUT_5POINT0_BACK,
++    AV_CHANNEL_LAYOUT_5POINT1_BACK,
++    { 0 },
++};
++
++static const AVOption aac_dec_options[] = {
++    { "conceal", "Error concealment", offsetof(libaacDecodeCTX, error_conceal), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, AV_OPT_FLAG_AUDIO_PARAM | AV_OPT_FLAG_DECODING_PARAM },
++    { "esbr", "Enable the use of Enhanced SBR", offsetof(libaacDecodeCTX, esbr), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, AV_OPT_FLAG_AUDIO_PARAM | AV_OPT_FLAG_DECODING_PARAM },
++    { NULL }
++};
++
++static const AVClass aac_dec_class = {
++    .class_name = "libaac",
++    .item_name = av_default_item_name,
++    .option = aac_dec_options,
++    .version = LIBAVUTIL_VERSION_INT,
++};
++
++static void aac_dec_error_handler(uint32_t errorCode, const char *section, const char *errorMsg, bool isFatal, void *handle) {
++    AVCodecContext *ctx = (AVCodecContext *)handle;
++    av_log(ctx, AV_LOG_ERROR, "%s: %s (0x%08X)\n", section, errorMsg, errorCode);
++}
++
++static av_cold int libaac_decode_init(AVCodecContext *avctx)
++{
++    libaacDecodeCTX *s = avctx->priv_data;
++    AACDecodeSettings cfg = {0};
++
++    cfg.bitsPerSamples = 16;
++    cfg.errorConceal = s->error_conceal;
++    cfg.eSBR = s->esbr;
++    cfg.frameSize = 0;
++    cfg.asc = avctx->extradata;
++    cfg.ascSize = avctx->extradata_size;
++    cfg.errorHandleCtx = avctx;
++    cfg.errorHandler = aac_dec_error_handler;
++
++    s->decoder = aac_decode_open(cfg);
++    if (!s->decoder)
++    {
++        return AVERROR(EINVAL);
++    }
++
++    s->decode_buffer = av_mallocz(4096 * 8);
++    if (!s->decode_buffer)
++    {
++        return AVERROR(ENOMEM);
++    }
++
++    avctx->sample_fmt = AV_SAMPLE_FMT_S16;
++    return 0;
++}
++
++static av_cold int libaac_decode_close(AVCodecContext *avctx)
++{
++    libaacDecodeCTX *s = avctx->priv_data;
++
++    if (s->decoder)
++        aac_decode_close(s->decoder);
++
++    return 0;
++}
++
++static int libaac_decode_frame(AVCodecContext *avctx, AVFrame *frame,
++                                 int *got_frame_ptr, AVPacket *avpkt)
++{
++    libaacDecodeCTX *s = avctx->priv_data;
++    uint32_t decode_size, read_size;
++    int ret;
++
++    ret = aac_decode(s->decoder, avpkt->data, avpkt->size, s->decode_buffer, &decode_size, &read_size);
++    if (ret < 0)
++        return AVERROR_EXTERNAL;
++
++    avctx->sample_rate = s->decoder->sampleRate;
++    avctx->profile = s->decoder->aot - 1;
++    avctx->ch_layout = aac_ch_layouts[s->decoder->noChannels - 1];
++    avctx->frame_size = 1024;
++
++    if (decode_size <= 0)
++        return AVERROR_EOF;
++
++    frame->nb_samples = decode_size / av_get_bytes_per_sample(avctx->sample_fmt) / avctx->ch_layout.nb_channels;
++
++    if ((ret = ff_get_buffer(avctx, frame, 0)) < 0)
++        return ret;
++
++    av_log(avctx, AV_LOG_TRACE, "aac decode size: %d, decode buf: %d\n", decode_size, avctx->ch_layout.nb_channels * frame->nb_samples * av_get_bytes_per_sample(avctx->sample_fmt));
++    memcpy(frame->data[0], s->decode_buffer, decode_size);
++
++    *got_frame_ptr = 1;
++    return read_size;
++}
++
++static av_cold void libaac_decode_flush(AVCodecContext *avctx)
++{
++    libaacDecodeCTX *s = avctx->priv_data;
++
++    if (!s->decoder)
++        return;
++
++    aac_decode_flush_buffer(s->decoder);
++}
++
++const FFCodec ff_libaac_next_decoder = {
++    .p.name         = "libaac",
++    CODEC_LONG_NAME("custom libxaac-based AAC decoder"),
++    .p.type         = AVMEDIA_TYPE_AUDIO,
++    .p.id           = AV_CODEC_ID_AAC,
++    .priv_data_size = sizeof(libaacDecodeCTX),
++    .init           = libaac_decode_init,
++    FF_CODEC_DECODE_CB(libaac_decode_frame),
++    .close          = libaac_decode_close,
++    .flush          = libaac_decode_flush,
++    .p.capabilities = AV_CODEC_CAP_DR1 | AV_CODEC_CAP_CHANNEL_CONF,
++    .caps_internal  = FF_CODEC_CAP_NOT_INIT_THREADSAFE,
++    .p.priv_class   = &aac_dec_class,
++    .p.wrapper_name = "libaac",
++};
+diff --git a/libavcodec/libaac_nextenc.c b/libavcodec/libaac_nextenc.c
+new file mode 100755
+index 0000000000..3c34c24a63
+--- /dev/null
++++ b/libavcodec/libaac_nextenc.c
+@@ -0,0 +1,306 @@
++/*
++ * Libaac-next encoder (libxaac based)
++ * Copyright (c) 2025 Wrapper
++ *
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * FFmpeg is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with FFmpeg; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
++ */
++
++/**
++ * @file
++ * Interface to libaac-next encoder.
++ */
++
++#include <libaac.h>
++
++#include "libavutil/channel_layout.h"
++#include "libavutil/internal.h"
++#include "libavutil/intreadwrite.h"
++#include "libavutil/log.h"
++#include "libavutil/opt.h"
++#include "libavutil/mem.h"
++#include "avcodec.h"
++#include "defs.h"
++#include "audio_frame_queue.h"
++#include "codec_internal.h"
++#include "encode.h"
++#include "libavutil/samplefmt.h"
++#include "profiles.h"
++
++typedef struct
++{
++    const AVClass *class;
++    AACContext *encoder;
++    int delay_sent;
++    int flush_delay;
++
++    int eld_v2;
++    int esbr;
++    int frame_length;
++    int iq;
++    int tns;
++
++    AudioFrameQueue afq;
++} libaacEncodeCTX;
++
++static const AVOption aac_enc_options[] = {
++    { "eld_v2", "Enable ELDv2 (LD-MPS extension for ELD stereo signals)", offsetof(libaacEncodeCTX, eld_v2), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, AV_OPT_FLAG_AUDIO_PARAM | AV_OPT_FLAG_ENCODING_PARAM },
++    { "esbr", "Enable the use of Enhanced SBR", offsetof(libaacEncodeCTX, esbr), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, AV_OPT_FLAG_AUDIO_PARAM | AV_OPT_FLAG_ENCODING_PARAM },
++    { "frame_length", "The desired frame length", offsetof(libaacEncodeCTX, frame_length), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 1024, AV_OPT_FLAG_AUDIO_PARAM | AV_OPT_FLAG_ENCODING_PARAM },
++    { "iq", "Inverse quantization", offsetof(libaacEncodeCTX, frame_length), AV_OPT_TYPE_INT, { .i64 = 2 }, 0, 2, AV_OPT_FLAG_AUDIO_PARAM | AV_OPT_FLAG_ENCODING_PARAM },
++    { "tns", "Temporal Noise Shaping", offsetof(libaacEncodeCTX, tns), AV_OPT_TYPE_BOOL, { .i64 = 1 }, 0, 1, AV_OPT_FLAG_AUDIO_PARAM | AV_OPT_FLAG_ENCODING_PARAM },
++    FF_AAC_PROFILE_OPTS
++    { NULL }
++};
++
++static const AVClass aac_enc_class = {
++    .class_name = "libaac",
++    .item_name = av_default_item_name,
++    .option = aac_enc_options,
++    .version = LIBAVUTIL_VERSION_INT,
++};
++
++static void aac_enc_error_handler(uint32_t errorCode, const char *section, const char *errorMsg, bool isFatal, void *handle) {
++    AVCodecContext *ctx = (AVCodecContext *)handle;
++    av_log(ctx, AV_LOG_ERROR, "%s: %s (0x%08X)\n", section, errorMsg, errorCode);
++}
++
++static av_cold int libaac_encode_init(AVCodecContext *avctx)
++{
++    libaacEncodeCTX *s = avctx->priv_data;
++    AACSettings cfg = {0};
++
++    /* number of channels */
++    if (avctx->ch_layout.nb_channels < 1 || avctx->ch_layout.nb_channels > 6)
++    {
++        av_log(avctx, AV_LOG_ERROR, "encoding %d channel(s) is not allowed\n", avctx->ch_layout.nb_channels);
++        return AVERROR(EINVAL);
++    }
++
++    cfg.sampleRate = avctx->sample_rate;
++    cfg.noChannels = avctx->ch_layout.nb_channels;
++    cfg.bitsPerSamples = avctx->sample_fmt == AV_SAMPLE_FMT_FLT ? 32 : 16;
++    cfg.bitrate = avctx->bit_rate;
++    cfg.adts = !(avctx->flags & AV_CODEC_FLAG_GLOBAL_HEADER);
++    cfg.cutoff = avctx->cutoff;
++    switch (avctx->profile) {
++        case AV_PROFILE_AAC_LOW:
++        case AV_PROFILE_UNKNOWN:
++            cfg.profile = AAC_LC;
++            break;
++
++        case AV_PROFILE_AAC_HE:
++            cfg.profile = AAC_HE;
++            break;
++
++        case AV_PROFILE_AAC_HE_V2:
++            cfg.profile = AAC_HEV2;
++            break;
++
++        case AV_PROFILE_AAC_LD:
++            cfg.profile = AAC_LD;
++            break;
++
++        case AV_PROFILE_AAC_ELD:
++            cfg.profile = AAC_ELD;
++            break;
++
++        default:
++            av_log(avctx, AV_LOG_ERROR, "unsupported profile, supported profiles are LC, HE, HEv2, LD and ELD\n");
++            return AVERROR(EINVAL);
++    }
++    cfg.tns = s->tns;
++    cfg.frameSize = s->frame_length;
++    cfg.eSBR = s->esbr;
++    cfg.iq = s->iq;
++
++    cfg.errorHandleCtx = avctx;
++    cfg.errorHandler = aac_enc_error_handler;
++
++    s->encoder = aac_encode_open(cfg);
++
++    if (!s->encoder)
++    {
++        return AVERROR(EINVAL);
++    }
++
++    avctx->frame_size = s->encoder->no_samples / avctx->ch_layout.nb_channels;
++    avctx->initial_padding = s->encoder->inputDelay;
++    s->flush_delay = s->encoder->inputDelay;
++
++    av_log(avctx, AV_LOG_TRACE, "frame size: %d, initial delay: %d\n", avctx->frame_size, avctx->initial_padding);
++
++    ff_af_queue_init(avctx, &s->afq);
++
++    /* Set decoder specific info */
++    avctx->extradata_size = 0;
++    if (avctx->flags & AV_CODEC_FLAG_GLOBAL_HEADER)
++    {
++        avctx->extradata = av_mallocz(s->encoder->ascSize + AV_INPUT_BUFFER_PADDING_SIZE);
++
++        if (!avctx->extradata)
++        {
++            return AVERROR(ENOMEM);
++        }
++
++        memcpy(avctx->extradata, s->encoder->asc, s->encoder->ascSize);
++    }
++    return 0;
++}
++
++static int libaac_encode_frame(AVCodecContext *avctx, AVPacket *pkt,
++                                const AVFrame *frame, int *got_packet)
++{
++    libaacEncodeCTX *s = avctx->priv_data;
++    int ret;
++    int discard_padding;
++
++    if ((ret = ff_alloc_packet(avctx, pkt, s->encoder->max_out_bytes)) < 0)
++        return ret;
++
++    if (!frame)
++    {
++        av_log(avctx, AV_LOG_TRACE, "flush_delay: %d\n", s->flush_delay);
++
++        if (s->flush_delay <= 0)
++            return 0;
++
++        /* Flushing */
++        if ((ret = aac_encode(s->encoder, NULL, 0, pkt->data, (unsigned int *)&pkt->size)) < 0)
++        {
++            return AVERROR(EINVAL);
++        }
++
++        s->flush_delay -= avctx->frame_size;
++    }
++    else
++    {
++        /* Encoding */
++        if ((ret = ff_af_queue_add(&s->afq, frame)) < 0)
++            return ret;
++
++        int encodeSize = av_get_bytes_per_sample(avctx->sample_fmt) * avctx->ch_layout.nb_channels * frame->nb_samples;
++        av_log(avctx, AV_LOG_TRACE, "encode size: %d\n", encodeSize);
++
++        if ((ret = aac_encode(s->encoder, frame->data[0], encodeSize, pkt->data, (unsigned int *)&pkt->size)) < 0)
++        {
++            return AVERROR(EINVAL);
++        }
++    }
++
++    ff_af_queue_remove(&s->afq, avctx->frame_size, &pkt->pts, &pkt->duration);
++
++    /* discard padding copied from fdkaac encoder */
++    discard_padding = avctx->frame_size - pkt->duration;
++
++    // Check if subtraction resulted in an overflow
++    if ((discard_padding < avctx->frame_size) != (pkt->duration > 0))
++    {
++        av_log(avctx, AV_LOG_ERROR, "discard padding overflow\n");
++        return AVERROR(EINVAL);
++    }
++
++    if ((!s->delay_sent && avctx->initial_padding > 0) || discard_padding > 0)
++    {
++        uint8_t *side_data =
++            av_packet_new_side_data(pkt, AV_PKT_DATA_SKIP_SAMPLES, 10);
++        if (!side_data)
++            return AVERROR(ENOMEM);
++        if (!s->delay_sent)
++        {
++            AV_WL32(side_data, avctx->initial_padding);
++            s->delay_sent = 1;
++        }
++        AV_WL32(side_data + 4, discard_padding);
++    }
++
++    pkt->flags |= AV_PKT_FLAG_KEY;
++    *got_packet = 1;
++    return 0;
++}
++
++static void libaac_encode_flush(AVCodecContext *avctx)
++{
++    libaacEncodeCTX *s = avctx->priv_data;
++    uint8_t sink_null[32768];
++    int64_t pts, duration;
++    uint32_t out_bytes;
++
++    av_log(avctx, AV_LOG_TRACE, "encoder flush\n");
++    ff_af_queue_remove(&s->afq, s->afq.frame_count, &pts, &duration);
++    aac_encode(s->encoder, NULL, 0, sink_null, &out_bytes);
++}
++
++static av_cold int libaac_encode_close(AVCodecContext *avctx)
++{
++    libaacEncodeCTX *s = avctx->priv_data;
++
++    if (s->encoder)
++        aac_encode_close(s->encoder);
++
++    ff_af_queue_close(&s->afq);
++
++    return 0;
++}
++
++static const FFCodecDefault defaults[] = {
++    {"b", "128000"},
++    {NULL}};
++
++static const AVProfile libaac_profiles[] = {
++    { AV_PROFILE_AAC_LOW,   "LC"       },
++    { AV_PROFILE_AAC_HE,    "HE-AAC"   },
++    { AV_PROFILE_AAC_HE_V2, "HE-AACv2" },
++    { AV_PROFILE_AAC_LD,    "LD"       },
++    { AV_PROFILE_AAC_ELD,   "ELD"      },
++    {AV_PROFILE_UNKNOWN},
++};
++
++static const int aac_sample_rates[] = {
++    96000, 88200, 64000, 48000, 44100, 32000,
++    24000, 22050, 16000, 12000, 11025, 8000, 0
++};
++
++static const AVChannelLayout aac_ch_layouts[7] = {
++    AV_CHANNEL_LAYOUT_MONO,
++    AV_CHANNEL_LAYOUT_STEREO,
++    AV_CHANNEL_LAYOUT_SURROUND,
++    AV_CHANNEL_LAYOUT_4POINT0,
++    AV_CHANNEL_LAYOUT_5POINT0_BACK,
++    AV_CHANNEL_LAYOUT_5POINT1_BACK,
++    { 0 },
++};
++
++const FFCodec ff_libaac_next_encoder = {
++    .p.name = "libaac",
++    CODEC_LONG_NAME("custom libxaac-based AAC encoder"),
++    .p.type = AVMEDIA_TYPE_AUDIO,
++    .p.id = AV_CODEC_ID_AAC,
++    .p.capabilities = AV_CODEC_CAP_DELAY | AV_CODEC_CAP_ENCODER_FLUSH,
++    .caps_internal = FF_CODEC_CAP_NOT_INIT_THREADSAFE,
++    .priv_data_size = sizeof(libaacEncodeCTX),
++    .init = libaac_encode_init,
++    FF_CODEC_ENCODE_CB(libaac_encode_frame),
++    .flush = libaac_encode_flush,
++    .close = libaac_encode_close,
++    CODEC_SAMPLEFMTS(AV_SAMPLE_FMT_S16),
++    .p.priv_class = &aac_enc_class,
++    .defaults = defaults,
++    .p.profiles = libaac_profiles,
++    CODEC_SAMPLERATES_ARRAY(aac_sample_rates),
++    .p.wrapper_name = "libaac",
++    CODEC_CH_LAYOUTS_ARRAY(aac_ch_layouts),
++};
